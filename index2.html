@@ -472,7 +472,9 @@ const LEVELS = [
     escapeLine:"EMBER PATH TAHLİYE EDİLDİ",
     checkpoint:620, parTime:60,
     arena:null,
-    boss:null,
+    boss:{x:1050,triggerX:900,hp:7,kind:"flyer",w:130,h:82,
+          sprite:"boss_stage1.png", rageSprite:"boss_stage1_rage.png",
+          name:"SİKLON", title:"EMBER PATH DEVRİYESİ"},
   },
   { // ── STAGE 2 — Magma Bridge (three gaps + a forced arena wave)
     name:"MAGMA BRIDGE",
@@ -516,8 +518,10 @@ const LEVELS = [
     escapeLine:"MAGMA KÖPRÜSÜ GERİDE BIRAKILDI",
     // past the arena band: dying to the wave should not replay the run-up
     checkpoint:1260, parTime:80,
+    boss:{x:1450,triggerX:1300,hp:10,kind:"walker",w:150,h:148,
+          sprite:"boss_stage2.png",
+          name:"MAGMA YÜRÜYÜCÜ", title:"KÖPRÜNÜN AĞIR ZIRHI"},
     arena:{start:700,end:1150},
-    boss:null,
   },
   { // ── STAGE 3 — Volcano Core (longest gauntlet, then the Alpha boss)
     name:"VOLCANO CORE",
@@ -566,7 +570,8 @@ const LEVELS = [
     // on the approach instead of at the start of the stage
     checkpoint:1200, parTime:100,
     arena:{start:600,end:1100},
-    boss:{x:1450,triggerX:1380,hp:12,
+    boss:{x:1450,triggerX:1380,hp:12,kind:"flyer",w:140,h:100,
+          sprite:"enemyboss.png",
           name:"ALFA PTERODACTYL", title:"VOLKAN ÇEKİRDEĞİNİN BEKÇİSİ"},
   },
 ];
@@ -1488,16 +1493,21 @@ let gateOpen=false;
 let bossShakeTimer=0; // sustained heavier shake on boss death, separate from normal hit-shake decay
 let lavaBalls=[];
 let bossFlameBursts=[]; // vertical flame-burst hazards from the boss's second attack
+let shockwaves=[];      // ground waves thrown out by the walker's stomp
 function initBoss(){
   const spec=LEVELS[levelIndex].boss;
   // stages without a boss get no boss entity at all, and their exit portal
   // starts already open — there's nothing guarding it
   boss = spec ? {
     type:"boss",
-    x:spec.x, y:-160, baseY:170, w:BOSS_W, h:BOSS_H,
+    x:spec.x, y:-160, baseY:170, w:spec.w||BOSS_W, h:spec.h||BOSS_H,
     hp:spec.hp||12, maxHp:spec.hp||12,
     name:spec.name||"ALFA PTERODACTYL", title:spec.title||"",
+    kind:spec.kind||"flyer",
+    art:spec.sprite||"enemyboss.png", rageArt:spec.rageSprite||null,
     phase:1,               // flips to 2 at half health — see enterBossPhase2
+    diveState:"none", diveTimer:0, diveCooldown:rnd(3,5), diveDir:-1,
+    stompCooldown:2.2, walkDir:-1,
     wavePhase:rnd(0,Math.PI*2),
     fireCooldown:2.5,      // slow homing lava-ball attack
     flameCooldown:4,       // vertical flame-burst attack
@@ -1511,6 +1521,9 @@ function initBoss(){
   portalReveal = spec?0:1;
   lavaBalls=[];
   bossFlameBursts=[];
+  shockwaves=[];
+  if(boss) bossArt(boss.art);           // start the download early
+  if(boss&&boss.rageArt) bossArt(boss.rageArt);
   bossIntroTriggered=false;
   warningBannerTimer=0;
   stageClearDelay=0;
@@ -1555,7 +1568,7 @@ function loadLevel(i){
 
   // clear anything left over from the previous stage
   drops=[]; particles=[]; floatingTexts=[]; magmaBursts=[];
-  playerBombs=[]; babyDinos=[]; laser=null;
+  playerBombs=[]; babyDinos=[]; laser=null; shockwaves=[];
   goalReached=false;
   camX=0;
   player.x=60; player.y=360; player.vx=0; player.vy=0;
@@ -2643,6 +2656,48 @@ function drawMagmaBursts(){
   }
 }
 
+// ─── STOMP SHOCKWAVES (the walker's signature) ───────────────
+// A wave that runs along the ground line. It only hits a grounded player,
+// so jumping over one is the answer — the walker punishes standing still,
+// which is exactly the opposite of what the flyers punish.
+function updateShockwaves(dt){
+  for(let i=shockwaves.length-1;i>=0;i--){
+    const sw=shockwaves[i];
+    sw.x+=sw.dir*420*dt;
+    sw.life+=dt;
+    if(sw.life>3.2||sw.x<camX-120||sw.x>camX+W+120){ shockwaves.splice(i,1); continue; }
+    if(player.invuln<=0 && player.onGround &&
+       Math.abs((player.x+PLAYER_W/2)-sw.x)<26 &&
+       Math.abs((player.y+PLAYER_H)-GROUND_Y)<50){
+      takeDamage("enemy");
+    }
+    if(Math.random()<dt*30) spawnParticles(sw.x-camX,GROUND_Y-6,1,
+      ["#ff8800","#ffcc44","#ffffff"],
+      {minSpd:30,maxSpd:110,upBias:80,minLife:0.2,maxLife:0.5,type:"square",gravity:200,minSz:2,maxSz:5});
+  }
+}
+function drawShockwaves(){
+  for(const sw of shockwaves){
+    const sx=sw.x-camX;
+    if(sx<-40||sx>W+40) continue;
+    const hgt=26+6*Math.sin(t*20+sw.life*8);
+    ctx.save();
+    ctx.globalCompositeOperation="lighter";
+    glow("#ff6600",16);
+    const g=ctx.createLinearGradient(0,GROUND_Y-hgt,0,GROUND_Y);
+    g.addColorStop(0,"rgba(255,180,60,0)");
+    g.addColorStop(1,"rgba(255,120,20,0.9)");
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(sx-16,GROUND_Y);
+    ctx.lineTo(sx,GROUND_Y-hgt);
+    ctx.lineTo(sx+16,GROUND_Y);
+    ctx.closePath(); ctx.fill();
+    noGlow();
+    ctx.restore();
+  }
+}
+
 // ─── DRAW BOSS LAVA BALLS ───────────────────────────────────────
 function drawLavaBalls(){
   for(const lb of lavaBalls){
@@ -2702,6 +2757,21 @@ bossSprite.onload=()=>{ bossSpriteLoaded=true; };
 bossSprite.src="enemyboss.png";
 
 // ─── DRAW BOSS ───────────────────────────────────────────────
+// Each boss names its own art, and a boss can swap art mid-fight (stage 1's
+// drone comes apart at half health). Sprites load lazily and every one of
+// them has a fallback, so a missing file costs a silhouette, not a crash.
+const BOSS_ART={};
+function bossArt(srcName){
+  if(!srcName) return null;
+  let e=BOSS_ART[srcName];
+  if(!e){
+    e=BOSS_ART[srcName]={img:new Image(), loaded:false, bbox:null};
+    e.img.onload=()=>{ e.bbox=computeSpriteBBox(e.img,false); e.loaded=true; };
+    e.img.src=srcName;
+  }
+  return e;
+}
+
 function drawBoss(){
   if(!boss||boss.dead) return;
   const bx=boss.x-camX, by=boss.y;
@@ -2717,8 +2787,18 @@ function drawBoss(){
     ctx.globalAlpha=0.5+0.5*Math.sin(boss.hitFlash*30);
   }
 
-  if(bossSpriteLoaded){
-    ctx.drawImage(bossSprite,-boss.w/2,-boss.h/2,boss.w,boss.h);
+  const art=bossArt(boss.art);
+  if(art&&art.loaded){
+    // fit the trimmed art into the hitbox without stretching it, and mirror
+    // it when the player is behind — the source sheets all face left
+    const bb=art.bbox||{x:0,y:0,w:art.img.naturalWidth,h:art.img.naturalHeight};
+    const scale=Math.min(boss.w/bb.w,boss.h/bb.h);
+    const dw=bb.w*scale, dh=bb.h*scale;
+    const faceRight=(player.x+PLAYER_W/2)>boss.x;
+    ctx.save();
+    if(faceRight) ctx.scale(-1,1);
+    ctx.drawImage(art.img,bb.x,bb.y,bb.w,bb.h,-dw/2,-dh/2,dw,dh);
+    ctx.restore();
     if(boss.phase>=2){
       // an enraged wash over the art, additive so it glows rather than muddies
       ctx.save();
@@ -2731,6 +2811,15 @@ function drawBoss(){
   } else {
     ctx.fillStyle="#ff0000";
     ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
+  }
+  // a telegraph flash right before a diving swoop
+  if(boss.diveState==="telegraph"){
+    ctx.save();
+    ctx.globalCompositeOperation="lighter";
+    ctx.globalAlpha=0.3+0.3*Math.sin(t*26);
+    ctx.fillStyle="#ffee66";
+    ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
+    ctx.restore();
   }
   ctx.globalAlpha=1;
 
@@ -4051,9 +4140,49 @@ function update(dt){
       if(boss.phase===1 && boss.hp<=boss.maxHp/2) enterBossPhase2();
       const rage=boss.phase>=2;
       boss.wavePhase+=dt*(rage?3.2:2);
-      boss.baseY=170+Math.sin(t*(rage?1.9:1.2))*(rage?58:40);
-      boss.y=boss.baseY+Math.sin(Date.now()/220+boss.wavePhase)*8;
       if(boss.hitFlash>0) boss.hitFlash=Math.max(0,boss.hitFlash-dt);
+
+      if(boss.kind==="walker"){
+        // GROUND UNIT: it never leaves the floor. It closes on the player and
+        // stomps; the wave punishes standing, so the fight reads as "keep
+        // moving and get airborne", the opposite of the flyers.
+        boss.y=GROUND_Y-boss.h/2;
+        const toP=(player.x+PLAYER_W/2)-boss.x;
+        boss.walkDir=Math.sign(toP)||1;
+        if(Math.abs(toP)>90) boss.x+=boss.walkDir*(rage?78:48)*dt;
+        boss.stompCooldown-=dt*(rage?1.7:1);
+        if(boss.stompCooldown<=0){
+          boss.stompCooldown=rnd(2.0,3.0);
+          for(const d of (rage?[-1,1,-1]:[-1,1])){
+            shockwaves.push({x:boss.x+d*40,dir:d,life:rage?rnd(0,0.25):0});
+          }
+          screenShake=Math.min(6,screenShake+5);
+          hitStopTimer=Math.max(hitStopTimer,0.05);
+          playExplosion();
+        }
+      } else {
+        // FLYER: the original hover-and-bob, plus a telegraphed swoop
+        boss.baseY=170+Math.sin(t*(rage?1.9:1.2))*(rage?58:40);
+        boss.y=boss.baseY+Math.sin(Date.now()/220+boss.wavePhase)*8;
+        boss.diveCooldown-=dt*(rage?1.6:1);
+        if(boss.diveState==="none" && boss.diveCooldown<=0){
+          boss.diveState="telegraph"; boss.diveTimer=0.55;
+          boss.diveDir=Math.sign((player.x+PLAYER_W/2)-boss.x)||-1;
+          boss.diveTargetY=player.y+PLAYER_H/2;
+        } else if(boss.diveState==="telegraph"){
+          boss.diveTimer-=dt;
+          if(boss.diveTimer<=0){ boss.diveState="swoop"; boss.diveTimer=0.9; }
+        } else if(boss.diveState==="swoop"){
+          boss.diveTimer-=dt;
+          boss.x+=boss.diveDir*(rage?560:430)*dt;
+          boss.y+=((boss.diveTargetY-boss.y))*Math.min(1,dt*4);
+          boss.baseY=boss.y;
+          if(boss.diveTimer<=0){
+            boss.diveState="none";
+            boss.diveCooldown=rnd(2.6,4.4);
+          }
+        }
+      }
 
       // attack 1: slow homing lava ball
       boss.fireCooldown-=dt*(rage?1.7:1);
@@ -4080,7 +4209,7 @@ function update(dt){
 
       // attack 2: a downward vertical flame burst dropped beneath the boss
       boss.flameCooldown-=dt*(rage?1.8:1);
-      if(boss.flameCooldown<=0){
+      if(boss.flameCooldown<=0 && boss.kind!=="walker"){
         boss.flameCooldown=rnd(3.5,5);
         bossFlameBursts.push({x:boss.x,y:boss.y+boss.h/2,life:0,maxLife:1.1});
         playExplosion();
@@ -4128,6 +4257,8 @@ function update(dt){
       lavaBalls.splice(i,1);
     }
   }
+
+  updateShockwaves(dt);
 
   // boss vertical flame-burst hazards (attack 2) — a column of fire that
   // telegraphs briefly, then damages anything standing in it
@@ -4322,6 +4453,8 @@ function killEnemy(e){
 // mini-boss can opt in by simply having the same field.
 function enterBossPhase2(){
   boss.phase=2;
+  // stage 1's drone comes apart: same fight, visibly wrecked
+  if(boss.rageArt) boss.art=boss.rageArt;
   bossRageTimer=2.2;
   boss.fireCooldown=Math.min(boss.fireCooldown,0.7);
   hitStopTimer=Math.max(hitStopTimer,0.12);
@@ -4557,6 +4690,7 @@ function loop(now){
   for(const e of groundEnemies) if(!e.dead) drawGroundEnemy(e);
   for(const e of enemies) if(!e.dead) drawPtero(e);
   drawBoss();
+  drawShockwaves();
   drawLavaBalls();
   drawBossFlameBursts();
   drawPlayerBombs();

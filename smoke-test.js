@@ -118,6 +118,9 @@ function run(){
   get WEAPONS(){return WEAPONS;},
   get laser(){return laser;},
   get lavaBalls(){return lavaBalls;},
+  get shockwaves(){return shockwaves;},
+  get bossFlameBursts(){return bossFlameBursts;},
+  drawShockwaves:()=>drawShockwaves(),
   get bossCardTimer(){return bossCardTimer;},
   get bossRageTimer(){return bossRageTimer;},
   get parriesThisLevel(){return parriesThisLevel;},
@@ -686,12 +689,17 @@ function runSuite(){
   check('a continue takes the letter away', g.weapon==='beam', g.weapon);
 }
 
-// ── scenario 12: walking into the rift (stage with no boss) ───
+// ── scenario 12: walking into the rift once it opens ─────────
 {
   const {g,step}=run();
   g.player.hp=99; g.player.invuln=999;
   step(5);
-  check('a bossless stage has its rift standing open', g.portalReveal===1, g.portalReveal);
+  check('every stage now guards its rift', g.portalReveal===0 && !g.gateOpen,
+        g.portalReveal+'/'+g.gateOpen);
+  // open it the way the stage does — by the boss falling
+  g.gateOpen=true;
+  for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('the rift materialises once the gate opens', g.portalReveal===1, g.portalReveal);
   const pp=g.goalPortalPos();
   check('the rift sits on the goal platform', pp.x>1100 && pp.y>200 && pp.y<330,
         pp.x+','+pp.y);
@@ -803,9 +811,11 @@ function runSuite(){
   const {g,step,drawStats}=run();
   g.player.hp=99; g.player.invuln=999;
   step(5);
-  // stage 1's gate is open from the start. With the sprite loaded the
-  // procedural arch must not be drawn at all — portal.png is transparent in
-  // places, so the arch showed through it as a door silhouette.
+  // With the rift open and its sprite loaded, the procedural arch must not
+  // be drawn at all — portal.png is transparent in places, so the arch
+  // showed through it as a door silhouette.
+  g.gateOpen=true;
+  for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
   g.camX=400;   // scroll the exit into view — drawPlatforms culls off-screen
   drawStats.quad=0;
   g.drawPlatforms();
@@ -1079,6 +1089,138 @@ function runSuite(){
   // and it clears itself
   for(let i=0;i<200 && g.bossCardTimer>0;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
   check('the card clears itself', g.bossCardTimer<=0, g.bossCardTimer);
+}
+
+// ── scenario 30: every stage is guarded ──────────────────────
+{
+  const {g,step}=run();
+  for(let i=0;i<3;i++){
+    g.loadLevel(i);
+    step(2);
+    check('stage '+(i+1)+' has a named boss',
+          !!g.boss && !!g.boss.name && !!g.boss.art,
+          g.boss?(g.boss.name+' / '+g.boss.art):'none');
+    check('stage '+(i+1)+' seals its rift until that boss falls',
+          g.gateOpen===false, g.gateOpen);
+  }
+  const kinds=[0,1,2].map(i=>{ g.loadLevel(i); return g.boss.kind; });
+  check('the three fights are not all the same shape',
+        new Set(kinds).size>1, kinds.join(','));
+}
+
+// ── scenario 31: the stage 1 drone ───────────────────────────
+{
+  const {g,step}=run();
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(2);
+  check('stage 1 fields a flyer', g.boss.kind==='flyer', g.boss.kind);
+  check('...with its own art', g.boss.art==='boss_stage1.png', g.boss.art);
+  check('...and less health than the Alpha', g.boss.hp<12, g.boss.hp);
+
+  g.boss.introState='active';
+  g.boss.diveCooldown=0.01;
+  const seen={};
+  for(let i=0;i<160;i++){
+    g.player.invuln=999; g.player.hp=99;
+    step(1);
+    seen[g.boss.diveState]=true;
+  }
+  check('the drone telegraphs and then swoops',
+        seen.telegraph && seen.swoop, Object.keys(seen).join(','));
+
+  // half health wrecks it — same fight, different sprite
+  g.boss.hp=Math.floor(g.boss.maxHp/2);
+  for(let i=0;i<6;i++){ g.player.invuln=999; step(1); }
+  check('the drone comes apart at half health', g.boss.phase===2, g.boss.phase);
+  check('...and swaps to the wrecked art',
+        g.boss.art==='boss_stage1_rage.png', g.boss.art);
+  g.drawBoss();
+  check('the wrecked drone renders', true);
+}
+
+// ── scenario 32: the stage 2 walker ──────────────────────────
+{
+  const {g,step}=run();
+  g.loadLevel(1);
+  g.player.hp=99; g.player.invuln=999;
+  step(2);
+  check('stage 2 fields a ground unit', g.boss.kind==='walker', g.boss.kind);
+  check('...and the heaviest health bar of the three', g.boss.hp>=10, g.boss.hp);
+
+  g.boss.introState='active';
+  // Stand the fight up where a real one happens: next to the boss with the
+  // camera on it. Shockwaves are culled once they leave the view, so leaving
+  // the camera parked at x=0 killed every wave on the frame it spawned.
+  g.player.x=g.boss.x-200;
+  g.camX=g.boss.x-450;
+  for(let i=0;i<10;i++){
+    g.player.invuln=999;
+    g.camX=g.boss.x-450;
+    step(1);
+  }
+  check('a walker stays on the floor',
+        Math.abs(g.boss.y-(g.GROUND_Y-g.boss.h/2))<1,
+        g.boss.y+' vs '+(g.GROUND_Y-g.boss.h/2));
+
+  // it stomps waves down the bridge
+  g.shockwaves.length=0;
+  g.boss.stompCooldown=0.01;
+  for(let i=0;i<10 && g.shockwaves.length===0;i++){
+    g.player.invuln=999;
+    g.camX=g.boss.x-450;
+    step(1);
+  }
+  check('the stomp throws shockwaves both ways', g.shockwaves.length>=2,
+        g.shockwaves.length);
+  check('they travel in opposite directions',
+        new Set(g.shockwaves.map(w=>w.dir)).size===2,
+        g.shockwaves.map(w=>w.dir).join(','));
+  g.drawShockwaves();
+  check('shockwaves render', true);
+
+  // a walker does not drop flame columns out of the sky
+  g.bossFlameBursts.length=0;
+  g.boss.flameCooldown=0.01;
+  for(let i=0;i<20;i++){ g.player.invuln=999; step(1); }
+  check('a ground unit drops no aerial flame columns',
+        g.bossFlameBursts.length===0, g.bossFlameBursts.length);
+}
+
+// ── scenario 33: jumping a shockwave ─────────────────────────
+{
+  const {g,step}=run();
+  g.loadLevel(1);
+  g.player.hp=99;
+  step(5);
+  const putWave=()=>{
+    g.shockwaves.length=0;
+    g.shockwaves.push({x:g.player.x+53/2, dir:1, life:0});
+  };
+  // grounded: it connects
+  g.player.invuln=0; g.player.y=g.GROUND_Y-g.PLAYER_H; g.player.vy=0;
+  for(let i=0;i<8;i++){ step(1); }   // settle onto the floor
+  const hp1=g.player.hp;
+  g.player.invuln=0;
+  putWave();
+  for(let i=0;i<4 && g.player.hp===hp1;i++) step(1);
+  check('a shockwave hits a player standing on the floor', g.player.hp<hp1,
+        hp1+' -> '+g.player.hp);
+
+  // Airborne: it passes underneath. Note the hop has to stay CLOSE to the
+  // ground line — parking the dino at y=200 is so far up that the wave's own
+  // vertical range check rejects it, and the test then passes even when the
+  // "must be grounded" rule is deleted.
+  step(12);                       // burn off any hit-stop
+  const hopY=g.GROUND_Y-g.PLAYER_H-25;
+  const hp2=g.player.hp;
+  putWave();
+  for(let i=0;i<4;i++){
+    g.player.invuln=0;
+    g.player.y=hopY; g.player.vy=-200;   // rising, so never grounded
+    step(1);
+  }
+  check('jumping clears it', g.player.hp===hp2, hp2+' -> '+g.player.hp);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
