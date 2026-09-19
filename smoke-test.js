@@ -107,6 +107,10 @@ function run(){
   get radioQueue(){return radioQueue;},
   get radioFired(){return radioFired;},
   get followers(){return followers;}, get playerTrail(){return playerTrail;},
+  get scaredBabies(){return scaredBabies;}, get babyShots(){return babyShots;},
+  get PANIC_SECONDS(){return PANIC_SECONDS;},
+  followerPower:()=>followerPower(),
+  drawScaredBabies:()=>drawScaredBabies(),
   get rescuedThisLevel(){return rescuedThisLevel;},
   get rescuedTotal(){return rescuedTotal;},
   get cages(){return cages;}, get levelIndex(){return levelIndex;},
@@ -224,16 +228,29 @@ function runSuite(){
   const {g,step,keys}=run();
   // keep the dino alive and moving so the trail has real history
   g.player.hp=99; g.player.invuln=999;
-  step(30);
+  // This scenario measures the SHAPE of the chain, not whether it survives.
+  // Hatchlings can be scared off the train now, so anything that can hit one
+  // turns this into an intermittent failure with nothing to do with spacing.
+  // Clearing the enemies is not enough — random magma bursts are a hazard
+  // too — so hold every follower's i-frames open for the whole run.
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const safeStep=n=>{
+    for(let i=0;i<n;i++){
+      g.player.invuln=999; g.player.hp=99;
+      for(const f of g.followers) f.grace=1;
+      step(1);
+    }
+  };
+  safeStep(30);
   const cages=g.cages.slice();
   g.breakCage(cages[0]);
   check('freeing a cage adds a follower', g.followers.length===1, g.followers.length);
   check('rescue counter ticks up', g.rescuedThisLevel===1 && g.rescuedTotal===1);
   check('a rescue transmission goes out', !!g.radioFired.rescue1);
-  g.player.invuln=999;
-  step(40);
-  g.breakCage(cages[1]); g.player.invuln=999; step(40);
-  g.breakCage(cages[2]); g.player.invuln=999; step(40);
+  safeStep(40);
+  g.breakCage(cages[1]); safeStep(40);
+  g.breakCage(cages[2]); safeStep(40);
   check('train holds all three hatchlings', g.followers.length===3, g.followers.length);
   check('all-clear transmission fires on the last cage', !!g.radioFired.allsafe);
   // a fourth rescue must push the front one off the train, not grow it
@@ -242,7 +259,7 @@ function runSuite(){
   check('the displaced hatchling runs off on its own', g.babyDinos.length===1, g.babyDinos.length);
   // the chain must TRAIL a running player, and space itself out along the way
   keys({ArrowRight:true});
-  for(let i=0;i<120;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  safeStep(120);
   g.drawFollowers();
   const pcx=g.player.x+53/2;
   const gaps=g.followers.map(f=>pcx-f.x);
@@ -571,6 +588,148 @@ function runSuite(){
   }
 }
 
+// ── scenario 16: the POW model — hatchlings can be lost ───────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  // clear the level of live threats so only the one we place can scare it
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+
+  g.breakCage(g.cages[0]);
+  check('a freed hatchling joins with i-frames',
+        g.followers.length===1 && g.followers[0].grace>0, g.followers[0]&&g.followers[0].grace);
+  // it must NOT panic while those i-frames are up
+  const bully=g.enemies[0];
+  bully.dead=false; bully.dying=false; bully.hp=99;
+  for(let i=0;i<10;i++){
+    g.player.invuln=999;
+    bully.x=g.followers[0].x-28; bully.y=g.followers[0].y-19; bully.baseY=bully.y;
+    step(1);
+  }
+  check('i-frames hold the hatchling on the train for a moment',
+        g.followers.length===1, g.followers.length);
+
+  // ...then the same contact knocks it off
+  for(let i=0;i<120 && g.followers.length;i++){
+    g.player.invuln=999;
+    if(g.followers.length){ bully.x=g.followers[0].x-28; bully.y=g.followers[0].y-19; bully.baseY=bully.y; }
+    step(1);
+  }
+  check('an enemy hit knocks a hatchling off the train',
+        g.followers.length===0 && g.scaredBabies.length===1,
+        g.followers.length+'/'+g.scaredBabies.length);
+  check('a scared hatchling is not lost yet — it is on a timer',
+        g.rescuedThisLevel===1 && g.scaredBabies[0].timer>0, g.rescuedThisLevel);
+  g.drawScaredBabies();
+  check('the panicking hatchling renders', true);
+  bully.dead=true;
+
+  // walking onto it puts it back on the train
+  for(let i=0;i<60 && g.scaredBabies.length;i++){
+    g.player.invuln=999;
+    const b=g.scaredBabies[0];
+    g.player.x=b.x-26; g.player.y=b.y-33; g.player.vx=0; g.player.vy=0;
+    step(1);
+  }
+  check('touching it puts the hatchling back on the train',
+        g.followers.length===1 && g.scaredBabies.length===0,
+        g.followers.length+'/'+g.scaredBabies.length);
+  check('a recaptured hatchling still counts as rescued', g.rescuedThisLevel===1);
+
+  // now let one time out with the player nowhere near it
+  bully.dead=false;
+  for(let i=0;i<160 && g.followers.length;i++){
+    g.player.invuln=999;
+    if(g.followers.length){ bully.x=g.followers[0].x-28; bully.y=g.followers[0].y-19; bully.baseY=bully.y; }
+    step(1);
+  }
+  bully.dead=true;
+  check('it can be knocked off a second time', g.scaredBabies.length===1, g.scaredBabies.length);
+  const beforeLoss=g.rescuedThisLevel;
+  const strays=g.scaredBabies.length;
+  for(let i=0;i<420 && g.scaredBabies.length;i++){
+    g.player.invuln=999; g.player.hp=99;
+    // fly far away and stay there: standing still leaves the player sitting
+    // on the very hatchling it is supposed to be abandoning
+    g.player.x=760; g.player.y=140; g.player.vx=0; g.player.vy=0;
+    step(1);
+  }
+  check('an abandoned hatchling is lost for good', g.scaredBabies.length===0);
+  check('losing one takes it back off the stage tally',
+        g.rescuedThisLevel===beforeLoss-strays, beforeLoss+' -> '+g.rescuedThisLevel);
+  check('...and off the run tally too', g.rescuedTotal===g.rescuedThisLevel, g.rescuedTotal);
+}
+
+// ── scenario 17: the escort pays out ─────────────────────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+
+  let pw=g.followerPower();
+  check('no escort, no buff', pw.beamMult===1 && pw.fuelMult===1 && !pw.shooting,
+        JSON.stringify(pw));
+  g.breakCage(g.cages[0]);
+  pw=g.followerPower();
+  check('one hatchling speeds the beam up', pw.beamMult<1 && pw.fuelMult===1, pw.beamMult);
+  g.breakCage(g.cages[0]);
+  pw=g.followerPower();
+  check('two refuel the jetpack faster', pw.fuelMult>1 && !pw.shooting, pw.fuelMult);
+  g.breakCage(g.cages[0]);
+  pw=g.followerPower();
+  check('three make the escort open fire', pw.shooting && pw.beamMult<0.7,
+        JSON.stringify(pw));
+
+  // give them something to shoot at
+  const target=g.enemies[0];
+  target.dead=false; target.dying=false; target.hp=99;
+  for(let i=0;i<180 && g.babyShots.length===0;i++){
+    g.player.invuln=999;
+    target.x=g.player.x+120; target.y=g.player.y; target.baseY=target.y;
+    step(1);
+  }
+  check('a full escort spits fireballs', g.babyShots.length>0, g.babyShots.length);
+  const hpBefore=target.hp;
+  for(let i=0;i<120;i++){
+    g.player.invuln=999;
+    target.x=g.player.x+120; target.y=g.player.y; target.baseY=target.y;
+    step(1);
+  }
+  check('those fireballs actually damage enemies', target.hp<hpBefore,
+        hpBefore+' -> '+target.hp);
+}
+
+// ── scenario 18: strays are left behind at the rift ──────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  g.breakCage(g.cages[0]);
+  g.breakCage(g.cages[0]);
+  check('two aboard', g.rescuedThisLevel===2, g.rescuedThisLevel);
+  // knock one loose, then leave through the portal while it is still running
+  const bully=g.enemies[0];
+  bully.dead=false; bully.dying=false; bully.hp=99;
+  for(let i=0;i<160 && g.scaredBabies.length===0;i++){
+    g.player.invuln=999;
+    if(g.followers.length){ bully.x=g.followers[0].x-28; bully.y=g.followers[0].y-19; bully.baseY=bully.y; }
+    step(1);
+  }
+  const loose=g.scaredBabies.length, aboard=g.followers.length;
+  check('at least one is loose when the portal is reached', loose>=1, loose);
+  g.endLevel();
+  check('every hatchling left running is left behind', g.scaredBabies.length===0);
+  check('the debrief counts only who boarded',
+        g.rescuedThisLevel===aboard, 'aboard='+aboard+' loose='+loose+
+        ' tally='+g.rescuedThisLevel);
+}
+
 // ── scenario 9: death screen untouched ────────────────────────
 {
   const {g,step}=run();
@@ -590,7 +749,18 @@ for(const fire of [true,false]){
   FIRE_ONLOAD=fire; checks=0; failures=0;
   console.log('=== '+path.basename(TARGET)+
               '   (Image onload: '+(fire?'FIRES':'NEVER FIRES')+') ===');
-  runSuite();
+  // A broken build often throws (a check reads something that is suddenly
+  // undefined) rather than failing cleanly. Without this guard the run dies
+  // on the first throw and the summary reports one problem when there are
+  // five — which is exactly how a planted-regression check once looked fine.
+  try{
+    runSuite();
+  }catch(err){
+    failures++; checks++;
+    console.log('  FAIL  scenario threw and aborted this pass: '+err.message);
+    const frames=String(err.stack||'').split(String.fromCharCode(10));
+    if(frames[1]) console.log('        '+frames[1].trim());
+  }
   console.log('--- '+(checks-failures)+'/'+checks+' checks passed ---\n');
   totalChecks+=checks; totalFailures+=failures;
 }

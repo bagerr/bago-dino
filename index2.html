@@ -243,6 +243,38 @@ function stopSiren(){
   }
 }
 
+// ─── HATCHLING SFX ────────────────────────────────────────────
+// a frightened upward chirp when one is knocked off the train
+function playBabyPanic(){
+  if(!actx) return;
+  const now=actx.currentTime;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.type="square";
+  o.frequency.setValueAtTime(700,now);
+  o.frequency.exponentialRampToValueAtTime(1500,now+0.09);
+  o.frequency.exponentialRampToValueAtTime(900,now+0.2);
+  g.gain.setValueAtTime(0.0001,now);
+  g.gain.linearRampToValueAtTime(0.16,now+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+0.26);
+  o.connect(g); g.connect(actx.destination);
+  o.start(now); o.stop(now+0.27);
+}
+// and a flat, falling two-tone when one is gone for good
+function playBabyLost(){
+  if(!actx) return;
+  const now=actx.currentTime;
+  [[440,0],[294,0.16]].forEach(([f,off])=>{
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type="triangle";
+    o.frequency.setValueAtTime(f,now+off);
+    g.gain.setValueAtTime(0.0001,now+off);
+    g.gain.linearRampToValueAtTime(0.18,now+off+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+off+0.3);
+    o.connect(g); g.connect(actx.destination);
+    o.start(now+off); o.stop(now+off+0.31);
+  });
+}
+
 // ─── RADIO TRANSMISSION SFX (squelch blips + carrier hiss) ────
 // Deliberately short and quiet: the comms window opens over live gameplay,
 // so this can never step on the BGM or the sustained laser tone.
@@ -797,10 +829,31 @@ let babyDinos=[]; // hatchlings that have peeled off the train and run for it
 const MAX_FOLLOWERS=3;      // at most three hatchlings in the chain
 const FOLLOW_GAP=0.30;      // seconds of lag between consecutive links
 const TRAIL_SECONDS=2.4;    // how much player history the trail keeps
+const PANIC_SECONDS=5.0;    // window to grab a scared hatchling back
+const REJOIN_GRACE=1.2;     // i-frames after joining, so one hit is not two
+const CATCH_LOCK=0.4;       // it has to actually break away before you can grab it
 let followers=[];
 let playerTrail=[];         // {x,y,t,facing}, world space, oldest first
+let scaredBabies=[];        // knocked off the train, running loose, losable
+let babyShots=[];           // fireballs spat by a full escort
 let rescuedThisLevel=0;
 let rescuedTotal=0;
+
+// What the escort pays out. This is the whole point of the POW model: the
+// hatchlings are not a score counter you fill in, they are equipment you can
+// lose. Carrying more makes you stronger, so losing one is felt immediately.
+//   1 → the beam ticks damage faster
+//   2 → the jetpack refuels faster
+//   3 → they start spitting fireballs at whatever is closest
+function followerPower(){
+  const n=followers.length;
+  return {
+    beamMult: n>=3 ? 0.62 : (n>=1 ? 0.78 : 1),  // multiplies the damage interval
+    fuelMult: n>=2 ? 1.9 : 1,
+    shooting: n>=3,
+    tier: n
+  };
+}
 
 function recordPlayerTrail(){
   playerTrail.push({x:player.x+PLAYER_W/2, y:player.y+PLAYER_H*0.55, t:t, facing:player.facing});
@@ -824,8 +877,168 @@ function snapFollowersToPlayer(){
     f.y=player.y+PLAYER_H*0.55;
   }
 }
+// Anything that would hurt the player hurts the escort too. Enemy boxes are
+// tested the same way the player's own collision tests them ({x,y,w,h} as
+// drawn), so a hit that looks like a hit is one.
+function followerHazardAt(f){
+  const box={x:f.x-12,y:f.y-12,w:24,h:24};
+  for(const e of enemies){
+    if(e.dead||e.dying) continue;
+    if(overlaps(box,{x:e.x,y:e.y,w:e.w,h:e.h})) return true;
+  }
+  for(const e of groundEnemies){
+    if(e.dead||e.dying) continue;
+    if(overlaps(box,{x:e.x,y:e.y,w:e.w,h:e.h})) return true;
+  }
+  if(boss&&!boss.dead&&boss.introState==="active" &&
+     overlaps(box,{x:boss.x-boss.w/2,y:boss.y-boss.h/2,w:boss.w,h:boss.h})) return true;
+  for(const lb of lavaBalls) if(Math.hypot(lb.x-f.x,lb.y-f.y)<22) return true;
+  for(const m of magmaBursts) if(Math.hypot(m.x-f.x,m.y-f.y)<20) return true;
+  for(const fb of bossFlameBursts){
+    if(fb.life>0.4 && Math.abs(fb.x-f.x)<26 && f.y>fb.y) return true;
+  }
+  return false;
+}
+// knocked off the train: it bolts, and PANIC_SECONDS later it is gone
+function panicFollower(idx){
+  const f=followers[idx];
+  followers.splice(idx,1);
+  scaredBabies.push({
+    x:f.x, y:f.y,
+    vx:-player.facing*rnd(40,110)+rnd(-40,40), vy:-240,
+    timer:PANIC_SECONDS, catchLock:CATCH_LOCK, bob:rnd(0,Math.PI*2), facing:f.facing
+  });
+  playBabyPanic();
+  screenShake=Math.min(6,screenShake+3);
+  hitStopTimer=Math.max(hitStopTimer,0.04);
+  spawnFloatingText(f.x-camX,f.y-22,"YAVRU PANİKTE!","#ff5577",13);
+  spawnParticles(f.x-camX,f.y,10,["#ffdd88","#ff5577","#ffffff"],
+    {minSpd:60,maxSpd:180,minLife:0.2,maxLife:0.5,type:"circle",gravity:120});
+  // null key = never deduped; this one has to be allowed to fire every time
+  queueRadio(null,"YAVRU DİNO",["Korktum, kaçıyorum!","Yakala beni!"],
+    {color:"#ff5577",urgent:true,hold:2.2});
+}
+function recaptureBaby(b){
+  if(followers.length>=MAX_FOLLOWERS){
+    const oldest=followers.shift();
+    babyDinos.push({x:oldest.x,y:oldest.y,vx:player.facing*110,life:1.6});
+  }
+  followers.push({x:b.x,y:b.y,bob:rnd(0,Math.PI*2),facing:player.facing,grace:REJOIN_GRACE});
+  playChime(chain);
+  spawnFloatingText(b.x-camX,b.y-20,"YAKALANDI!","#8effc9",14);
+  spawnParticles(b.x-camX,b.y,12,["#8effc9","#ffdd88","#ffffff"],
+    {minSpd:50,maxSpd:170,minLife:0.2,maxLife:0.5,type:"circle",gravity:60});
+}
+// gone: the stage tally and the run tally both go down, which is what makes
+// the debrief's "X / 3" an actual result instead of a receipt
+function loseBaby(b,silent){
+  rescuedThisLevel=Math.max(0,rescuedThisLevel-1);
+  rescuedTotal=Math.max(0,rescuedTotal-1);
+  spawnParticles(b.x-camX,b.y,14,["#ff3355","#772233","#ffffff"],
+    {minSpd:60,maxSpd:200,minLife:0.3,maxLife:0.7,type:"square",gravity:140});
+  if(silent) return;
+  playBabyLost();
+  spawnFloatingText(b.x-camX,b.y-20,"YAVRU KAYBEDİLDİ","#ff3355",15);
+  queueRadio(null,"KOMUTA MERKEZİ",["Bir yavru kayboldu.","Diğerlerini kaybetme!"],
+    {color:"#ff3355",urgent:true,hold:2.6});
+}
+function updateScaredBabies(dt){
+  for(let i=scaredBabies.length-1;i>=0;i--){
+    const b=scaredBabies[i];
+    b.timer-=dt;
+    b.bob+=dt*14;
+    b.vy+=900*dt;
+    b.x+=b.vx*dt; b.y+=b.vy*dt;
+    b.vx*=Math.pow(0.45,dt);
+    b.facing=b.vx>=0?1:-1;
+    // frightened hopping: it bounces along whatever it lands on instead of
+    // standing still waiting to be collected
+    for(const p of platforms){
+      if(p.lavaPit) continue;
+      if(b.x>p.x-6&&b.x<p.x+p.w+6&&b.y>=p.y-14&&b.y<=p.y+18&&b.vy>0){
+        b.y=p.y-12; b.vy=-rnd(130,230); b.vx+=rnd(-50,50);
+        break;
+      }
+    }
+    // The train rides right on top of a standing player, so without this
+    // lock the hatchling would be re-grabbed on the very frame it panics and
+    // the whole mechanic would never fire. It has to break away first.
+    if(b.catchLock>0) b.catchLock-=dt;
+    else if(Math.hypot((player.x+PLAYER_W/2)-b.x,(player.y+PLAYER_H*0.55)-b.y)<38){
+      recaptureBaby(b); scaredBabies.splice(i,1); continue;
+    }
+    if(b.y>LAVA_Y||b.timer<=0){ loseBaby(b,false); scaredBabies.splice(i,1); continue; }
+  }
+}
+// the escort fights back once all three are aboard
+function updateBabyShots(dt){
+  for(let i=babyShots.length-1;i>=0;i--){
+    const s=babyShots[i];
+    s.x+=s.vx*dt; s.y+=s.vy*dt; s.life+=dt;
+    if(s.life>1.8){ babyShots.splice(i,1); continue; }
+    let hit=false;
+    for(const e of [...enemies,...groundEnemies]){
+      if(e.dead||e.dying) continue;
+      if(overlaps({x:s.x-5,y:s.y-5,w:10,h:10},{x:e.x,y:e.y,w:e.w,h:e.h})){
+        e.hp-=1; e.hitFlash=0.2;
+        if(e.hp<=0&&!e.dying){ e.dying=true; e.deathTimer=0.07; }
+        hit=true; break;
+      }
+    }
+    if(hit){
+      spawnParticles(s.x-camX,s.y,6,["#ffaa33","#ffdd88","#ffffff"],
+        {minSpd:40,maxSpd:140,minLife:0.15,maxLife:0.35,type:"circle",gravity:80,minSz:1,maxSz:3});
+      babyShots.splice(i,1);
+    }
+  }
+}
+function drawBabyShots(){
+  for(const s of babyShots){
+    const sx=s.x-camX;
+    glow("#ff8800",12);
+    ctx.fillStyle="#ffaa33";
+    ctx.beginPath(); ctx.arc(sx,s.y,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#fff3c4";
+    ctx.beginPath(); ctx.arc(sx-1,s.y-1,2,0,Math.PI*2); ctx.fill();
+    noGlow();
+  }
+}
+function drawScaredBabies(){
+  for(const b of scaredBabies){
+    const bx=b.x-camX;
+    if(bx<-40||bx>W+40) continue;
+    // blinks faster and faster as the window runs out
+    const urgency=1-clamp(b.timer/PANIC_SECONDS,0,1);
+    if(Math.sin(t*(10+urgency*26))<-0.35) continue;
+    glow("#ff5577",12);
+    drawBaby(bx,b.y,26,b.facing);
+    noGlow();
+    // alarm bubble + a ring that drains with the timer
+    ctx.textAlign="center";
+    ctx.font="bold 14px 'Courier New',monospace";
+    ctx.fillStyle="#ff5577";
+    ctx.fillText("!",bx,b.y-22);
+    ctx.textAlign="left";
+    ctx.strokeStyle="rgba(255,85,119,0.85)"; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.arc(bx,b.y,17,-Math.PI/2,-Math.PI/2+Math.PI*2*clamp(b.timer/PANIC_SECONDS,0,1));
+    ctx.stroke();
+  }
+}
+
 function updateFollowers(dt){
   recordPlayerTrail();
+  // hazards first, and collected before the walk loop so splicing the array
+  // mid-iteration can't skip a link
+  const hit=[];
+  for(let i=0;i<followers.length;i++){
+    const f=followers[i];
+    if(f.grace>0){ f.grace-=dt; continue; }
+    if(followerHazardAt(f)) hit.push(i);
+  }
+  for(let k=hit.length-1;k>=0;k--) panicFollower(hit[k]);
+
+  const pw=followerPower();
   for(let i=0;i<followers.length;i++){
     const f=followers[i];
     const s=trailSampleAt(FOLLOW_GAP*(i+1)+0.12);
@@ -837,6 +1050,27 @@ function updateFollowers(dt){
     f.y+=(s.y-f.y)*k;
     f.facing=s.facing;
     f.bob+=dt*(9+i*1.4);
+
+    // a full escort spits fireballs at whatever is closest
+    if(pw.shooting){
+      f.shootCd=(f.shootCd===undefined?rnd(0.5,1.5):f.shootCd)-dt;
+      if(f.shootCd<=0){
+        f.shootCd=rnd(1.1,1.9);
+        let best=null,bestD=340;
+        for(const e of [...enemies,...groundEnemies]){
+          if(e.dead||e.dying) continue;
+          const d=Math.hypot((e.x+e.w/2)-f.x,(e.y+e.h/2)-f.y);
+          if(d<bestD){ bestD=d; best=e; }
+        }
+        if(best){
+          const dx=(best.x+best.w/2)-f.x, dy=(best.y+best.h/2)-f.y;
+          const dd=Math.hypot(dx,dy)||1;
+          babyShots.push({x:f.x,y:f.y,vx:(dx/dd)*420,vy:(dy/dd)*420,life:0});
+          playPew();
+        }
+      }
+    }
+
     // faint rising sparks so three of them read as a chain, not a blob.
     // spawnParticles takes SCREEN space, hence the camX here.
     if(Math.random()<dt*6) spawnParticles(f.x-camX,f.y+8,1,["#ffdd88","#fff3c4"],
@@ -871,7 +1105,7 @@ function breakCage(cage){
     const oldest=followers.shift();
     babyDinos.push({x:oldest.x,y:oldest.y,vx:player.facing*110,life:1.6});
   }
-  followers.push({x:cage.x,y:cage.y,bob:rnd(0,Math.PI*2),facing:player.facing});
+  followers.push({x:cage.x,y:cage.y,bob:rnd(0,Math.PI*2),facing:player.facing,grace:REJOIN_GRACE});
   const total=LEVELS[levelIndex].cages.length;
   if(rescuedThisLevel>=total){
     queueRadio("allsafe","KOMUTA MERKEZİ",
@@ -1204,6 +1438,7 @@ function loadLevel(i){
   // empty rescue train (the previous stage's hatchlings boarded the capsule)
   radio=null; radioQueue=[]; radioFired={};
   followers=[]; playerTrail=[]; rescuedThisLevel=0;
+  scaredBabies=[]; babyShots=[];
   bestChainThisLevel=0;
   warpTimer=0;   // portalReveal is set by initBoss(), which ran just above
   recordPlayerTrail();
@@ -2383,8 +2618,13 @@ function drawHUD(){
   ctx.fillText(`STAGE ${levelIndex+1}/${LEVELS.length} — ${LEVELS[levelIndex].name}`,bx+pad,lineY);
   lineY+=16;
   ctx.font="bold 11px 'Courier New',monospace";
-  ctx.fillStyle=rescuedThisLevel>=LEVELS[levelIndex].cages.length?"#8effc9":"#ffcc66";
-  ctx.fillText(`RESCUE: ${rescuedThisLevel}/${LEVELS[levelIndex].cages.length}`,bx+pad,lineY);
+  // red-flashes while a hatchling is loose — that is a countdown, not a stat
+  const loose=scaredBabies.length>0;
+  ctx.fillStyle = loose ? (Math.sin(t*12)>0?"#ff3355":"#ffaabb")
+        : (rescuedThisLevel>=LEVELS[levelIndex].cages.length?"#8effc9":"#ffcc66");
+  const esc=followers.length;
+  ctx.fillText(`RESCUE: ${rescuedThisLevel}/${LEVELS[levelIndex].cages.length}`+
+               (esc?`  ESCORT x${esc}`:"")+(loose?"  !":""),bx+pad,lineY);
 
   // combo timer bar under score box
   if(chain>0){
@@ -2865,7 +3105,7 @@ function update(dt){
   player.jetpack=useJet;
 
   // fuel regen when on ground + not jetting
-  if(player.onGround&&!useJet) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*dt);
+  if(player.onGround&&!useJet) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*followerPower().fuelMult*dt);
 
   // gravity — releasing the thrust drops the dino into a heavier, snappier fall
   // instead of a floaty one
@@ -2910,7 +3150,7 @@ function update(dt){
         player.y=p.y-PLAYER_H;
         player.vy=0;
         onAnyGround=true;
-        if(player.jetFuel<1) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*dt);
+        if(player.jetFuel<1) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*followerPower().fuelMult*dt);
       } else if(player.vy<0 && prev_y>=p.y+p.h-tol){
         player.y=p.y+p.h; player.vy=0;
       } else {
@@ -3017,7 +3257,8 @@ function update(dt){
           e.beamTick=0.05;
           e.hp-=5; // maximum power — shreds almost anything in one or two ticks
         } else {
-          e.beamTick=feverMode?0.09:0.18;
+          // a bigger escort shortens the interval between damage ticks
+          e.beamTick=(feverMode?0.09:0.18)*followerPower().beamMult;
           e.hp-=feverMode?2:1;
         }
         e.hitFlash=0.2;
@@ -3465,6 +3706,8 @@ function update(dt){
 
   // rescue train — records the player's path and walks the chain along it
   updateFollowers(dt);
+  updateScaredBabies(dt);
+  updateBabyShots(dt);
 
   // ── story trigger: closing on the first lava pit of the stage ──
   // lavaPits carry world x/width, and player.x is world space too, so these
@@ -3670,6 +3913,11 @@ function endLevel(){
   player.wasFiring=false;
   radio=null; radioQueue=[];   // nothing on the air over a dark screen
 
+  // anything still loose when you step into the rift is left behind. Silent,
+  // because the debrief is about to tell the story anyway.
+  for(const b of scaredBabies) loseBaby(b,true);
+  scaredBabies=[]; babyShots=[];
+
   // the rescue train boards the capsule — 500 per hatchling, 1000 more if
   // the whole brood made it out
   const total=LEVELS[levelIndex].cages.length;
@@ -3747,6 +3995,8 @@ function loop(now){
   drawPlayerBombs();
   drawBabyDinos();
   drawWarped(drawFollowers);   // the rescue train, drawn behind the player
+  drawScaredBabies();          // ...and the ones that bolted, which do NOT warp
+  drawBabyShots();
 
   drawLaser();
   drawParticles();
