@@ -654,6 +654,52 @@ const LEVELS = [
     arena:null,
     boss:null,
   },
+  { // ── STAGE 5 — Canopy Climb (the canopy's vertical half)
+    // The first stage that goes UP. camRise lets the view follow, the route
+    // is a zig-zag of mushroom shelves, and two vines carry you over the
+    // widest gap — a released swing goes further than any jump.
+    name:"CANOPY CLIMB", theme:"forest",
+    width:1200,
+    camRise:300,
+    platforms:[
+      {x:-200,y:GROUND_Y,w:420,h:76},
+      {x:220, y:GROUND_Y,w:140,h:76,lavaPit:true},
+      {x:360, y:GROUND_Y,w:220,h:76},
+      {x:580, y:GROUND_Y,w:160,h:76,lavaPit:true},
+      {x:740, y:GROUND_Y,w:460,h:76},
+      {x:120, y:350,w:110,h:18},
+      {x:400, y:395,w:90, h:16,bounce:true},
+      {x:300, y:300,w:100,h:18,crumble:true},
+      {x:450, y:255,w:100,h:18},
+      {x:620, y:210,w:100,h:18,crumble:true},
+      {x:840, y:230,w:110,h:18},
+      {x:960, y:160,w:110,h:18},
+      {x:1060,y:100,w:140,h:18,goal:true},
+    ],
+    lavaPits:[{x:220,w:140},{x:580,w:160}],
+    vines:[{x:720,y:80,len:150},{x:810,y:70,len:160}],
+    crystals:[{x:900,y:370},{x:940,y:380}],
+    coins:()=>[
+      ...coinArcOver(120,350,110,4),
+      ...coinArcOver(300,300,100,4),
+      ...coinArcOver(450,255,100,4),
+      ...coinArcOver(620,210,100,4),
+      ...coinArcOver(840,230,110,4),
+      ...coinArc(700,220,830,220,5,40),   // the swing's own arc
+    ],
+    flyers:[{x:520,y:150,patrol:[380,860],spd:72,species:"forest_flyer"}],
+    grounders:[
+      {fixed:{x:420,y:GROUND_Y},species:"forest_plant"},
+      {platX:740,platW:460,spd:54,species:"forest_crawler"},
+    ],
+    powerBoxes:[{x:450,y:205},{x:960,y:110}],
+    weapons:[{x:180,y:300,kind:"spread"}],
+    cages:[{x:1015,y:138,species:"trike"}],
+    escapeLine:"KANOPİNİN TEPESİNE ÇIKILDI",
+    checkpoint:700, parTime:90,
+    arena:null,
+    boss:null,
+  },
 ];
 
 // ─── WORLDS (the mission select map) ──────────────────────────
@@ -663,7 +709,7 @@ const LEVELS = [
 const WORLDS=[
   {id:"volcano", name:"VOLCANO CORE", sub:"LAV ÇEKİRDEĞİ",   levels:[0,1,2],
    mx:0.17, my:0.66, color:"#ff6a2a"},
-  {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3],
+  {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,4],
    mx:0.40, my:0.33, color:"#10b981"},
   {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[],
    mx:0.63, my:0.62, color:"#7dd3fc"},
@@ -708,7 +754,13 @@ let crystals = [];
 let stalactites = [];
 
 // ─── CAMERA ─────────────────────────────────────────────────
+// camX is the horizontal scroll, subtracted at draw time as always. camY is
+// how far the VIEW has lifted: the whole world pass is translated down by it
+// in loop(), so nothing else in the file has to learn about vertical scroll.
+// It only ever leaves zero on a stage that sets camRise, so every existing
+// stage is bit-for-bit unchanged.
 let camX = 0, camY = 0;
+const CAM_LIFT_ANCHOR=300;   // the screen row the player is held near while climbing
 
 // ─── ARENA LOCK (Metal Slug style mandatory wave) ─────────────
 // per-stage now: stage 1 has no arena at all, so these are set by loadLevel()
@@ -786,6 +838,112 @@ let reportTypeEnd=0;          // when the typewriter finishes (set by the draw)
 let reportTypeTick=0;
 const REPORT_MIN=1.6;         // ENTER is ignored until the panel has read in
 const REPORT_AUTO=14;         // ...and it rolls on by itself after this
+
+// ─── SWINGING VINES ───────────────────────────────────────────
+// A vine is a pendulum with a player on the end. Touching one in mid-air
+// grabs it; left/right pumps the swing the way a real one does (push at the
+// bottom of the arc), and jump lets go with whatever tangential speed you
+// had built up. Momentum is the whole point — a released swing should carry
+// you further than a jump ever could.
+const VINE_GRAB_R=30;
+const VINE_RELEASE_BOOST=-180;   // a little lift on top of the tangent
+let vines=[];
+let vineGrab=null;               // the vine currently held, or null
+let vineCooldown=0;              // stops an instant re-grab after releasing
+function initVines(){
+  vines=(LEVELS[levelIndex].vines||[]).map(v=>({
+    x:v.x, y:v.y, len:v.len||130,
+    ang:v.ang!==undefined?v.ang:rnd(-0.45,0.45),
+    angVel:0
+  }));
+  vineGrab=null; vineCooldown=0;
+}
+// where the grabbable tip of a vine currently hangs, in world space
+function vineTip(v){
+  return {x:v.x+Math.sin(v.ang)*v.len, y:v.y+Math.cos(v.ang)*v.len};
+}
+function updateVines(dt,left,right,jump){
+  if(vineCooldown>0) vineCooldown-=dt;
+  for(const v of vines){
+    if(v===vineGrab) continue;
+    // free vines settle back toward hanging
+    v.angVel+=(-(2200/v.len)*Math.sin(v.ang))*dt;
+    v.angVel*=Math.pow(0.35,dt);
+    v.ang+=v.angVel*dt;
+  }
+  if(vineGrab){
+    const v=vineGrab;
+    // gravity on the pendulum, plus pumping from the player's input
+    v.angVel+=(-(2600/v.len)*Math.sin(v.ang))*dt;
+    if(left)  v.angVel-=2.6*dt;
+    if(right) v.angVel+=2.6*dt;
+    v.angVel=clamp(v.angVel,-4.5,4.5);
+    v.angVel*=Math.pow(0.86,dt);
+    v.ang+=v.angVel*dt;
+    const tip=vineTip(v);
+    player.x=tip.x-PLAYER_W/2;
+    player.y=tip.y-PLAYER_H*0.35;
+    player.vx=0; player.vy=0;
+    player.onGround=false;
+    player.facing=v.angVel>=0?1:-1;
+    if(jump && !player.vineJumpHeld){
+      // release: convert the swing into real velocity
+      const tan=v.angVel*v.len;
+      player.vx=Math.cos(v.ang)*tan;
+      player.vy=-Math.sin(v.ang)*tan+VINE_RELEASE_BOOST;
+      vineGrab=null; vineCooldown=0.35;
+      playPowerUp();
+      spawnParticles(tip.x-camX,tip.y,10,["#a7f3d0","#34d399","#ffffff"],
+        {minSpd:60,maxSpd:200,minLife:0.2,maxLife:0.5,type:"circle",gravity:120});
+    }
+  } else if(vineCooldown<=0 && !player.onGround){
+    // grab whatever tip you brush against on the way past
+    const pcx=player.x+PLAYER_W/2, pcy=player.y+PLAYER_H*0.35;
+    for(const v of vines){
+      const tip=vineTip(v);
+      if(Math.hypot(pcx-tip.x,pcy-tip.y)<VINE_GRAB_R){
+        vineGrab=v;
+        // carry the approach speed into the swing instead of killing it dead
+        v.angVel=clamp(v.angVel+player.vx/v.len,-4.5,4.5);
+        playChime(chain);
+        break;
+      }
+    }
+  }
+  player.vineJumpHeld=jump;
+}
+function drawVines(){
+  for(const v of vines){
+    const ax=v.x-camX, ay=v.y;
+    if(ax<-80||ax>W+80) continue;
+    const tip=vineTip(v);
+    const tx=tip.x-camX, ty=tip.y;
+    // the vine itself, drawn as a slightly slack curve
+    ctx.strokeStyle="#2f6b3d"; ctx.lineWidth=6; ctx.lineCap="round";
+    ctx.beginPath();
+    ctx.moveTo(ax,ay);
+    ctx.quadraticCurveTo(ax+(tx-ax)*0.45,ay+(ty-ay)*0.55+10,tx,ty);
+    ctx.stroke();
+    ctx.strokeStyle="#4b9e5b"; ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(ax,ay);
+    ctx.quadraticCurveTo(ax+(tx-ax)*0.45,ay+(ty-ay)*0.55+10,tx,ty);
+    ctx.stroke();
+    // leaves along it
+    ctx.fillStyle="#3f8a4c";
+    for(let i=1;i<=3;i++){
+      const f=i/4;
+      const lx=lerp(ax,tx,f), ly=lerp(ay,ty,f)+8*Math.sin(f*Math.PI);
+      ctx.beginPath(); ctx.ellipse(lx+6,ly,7,3,0.5,0,Math.PI*2); ctx.fill();
+    }
+    // the grab knot, brighter when it is free to take
+    const ready=!vineGrab&&vineCooldown<=0;
+    glow(ready?"#7dffcf":"#2f6b3d",ready?12:4);
+    ctx.fillStyle=v===vineGrab?"#ffdd66":(ready?"#7dffcf":"#4b9e5b");
+    ctx.beginPath(); ctx.arc(tx,ty,7,0,Math.PI*2); ctx.fill();
+    noGlow();
+  }
+}
 
 // ─── COINS ──────────────────────────────────────────────────
 let coins = [];
@@ -1722,6 +1880,30 @@ function finishWorld(){
   playPowerUp();
 }
 
+// ─── CRUMBLING SHELVES ────────────────────────────────────────
+// A mushroom shelf holds your weight for CRUMBLE_DELAY, shakes while it
+// decides, drops away, and grows back. Platforms are per-stage COPIES, so
+// this runtime state can live on them directly.
+const CRUMBLE_DELAY=0.55, CRUMBLE_RESPAWN=2.8;
+const BOUNCE_VY=-760;
+function updateCrumbles(dt){
+  for(const p of platforms){
+    if(!p.crumble) continue;
+    if(p.gone){
+      p.respawnT-=dt;
+      if(p.respawnT<=0){ p.gone=false; p.crumbleT=undefined; }
+    } else if(p.crumbleT!==undefined){
+      p.crumbleT-=dt;
+      if(p.crumbleT<=0){
+        p.gone=true; p.respawnT=CRUMBLE_RESPAWN; p.crumbleT=undefined;
+        playExplosion();
+        spawnParticles(p.x+p.w/2-camX,p.y+6,16,["#6ee7b7","#2f6b3d","#4b9e5b"],
+          {minSpd:50,maxSpd:190,minLife:0.4,maxLife:0.9,type:"square",gravity:420,minSz:2,maxSz:6});
+      }
+    }
+  }
+}
+
 // ─── LOAD A STAGE ─────────────────────────────────────────────
 // Rebuilds every piece of live level state from the LEVELS table. Called once
 // at boot, on restart, and on each stage transition — nothing else needs to
@@ -1756,14 +1938,14 @@ function loadLevel(i){
   levelHasBoss=!!L.boss;
   BOSS_TRIGGER_X=L.boss?L.boss.triggerX:Infinity;
 
-  initCoins(); initEnemies(); initGroundEnemies();
+  initCoins(); initEnemies(); initGroundEnemies(); initVines();
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 
   // clear anything left over from the previous stage
   drops=[]; particles=[]; floatingTexts=[]; magmaBursts=[];
   playerBombs=[]; babyDinos=[]; laser=null; shockwaves=[];
   goalReached=false;
-  camX=0;
+  camX=0; camY=0;
   player.x=60; player.y=360; player.vx=0; player.vy=0;
   player.jetFuel=1;
 
@@ -2063,8 +2245,14 @@ function drawStalactites(){
 function drawPlatforms(){
   for(const p of platforms){
     if(p.lavaPit) continue;
-    const px = p.x - camX;
+    let px = p.x - camX;
     if(px+p.w<0||px>W) continue;
+    if(p.gone) continue;              // dropped away, nothing to draw
+    if(p.crumble && p.crumbleT!==undefined){
+      // the tell: it rattles harder the closer it is to letting go
+      const urg=1-clamp(p.crumbleT/CRUMBLE_DELAY,0,1);
+      px+=Math.sin(t*(28+urg*40))*(1+urg*2.5);
+    }
 
     if(p.goal){
       const gx=px+p.w/2, gateW=100, gateH=140, gy=p.y;
@@ -4059,6 +4247,27 @@ function update(dt){
   const fire  = K["KeyF"]||K["KeyJ"];
   const dashKey = K["ShiftLeft"]||K["ShiftRight"];
 
+  updateCrumbles(dt);
+  updateVines(dt,left,right,jump);
+  // hanging from a vine suspends the dino's own physics entirely — the
+  // pendulum owns its position until it lets go
+  if(vineGrab){
+    if(player.invuln>0) player.invuln-=dt;
+    updateParticles(dt);
+    updateFloatingTexts(dt);
+    updateFollowers(dt);
+    updateScaredBabies(dt);
+    applyShake(dt);
+    const camRiseV=LEVELS[levelIndex].camRise||0;
+    const wantYV=camRiseV>0?clamp(CAM_LIFT_ANCHOR-player.y,0,camRiseV):0;
+    camY=lerp(camY,wantYV,dt*(camRiseV>0?3.4:5));
+    if(!cameraLock){
+      const tX=player.x+PLAYER_W/2-W*0.33;
+      camX=clamp(lerp(camX,tX,dt*3.2),0,Math.max(0,levelWidth-W));
+    }
+    return;
+  }
+
   if(left) { player.vx+= (-MOVE_SPD-player.vx)*Math.min(1,dt*10); player.facing=-1; }
   else if(right){ player.vx+= (MOVE_SPD-player.vx)*Math.min(1,dt*10); player.facing=1; }
   else { player.vx*=Math.pow(0.05,dt); }
@@ -4186,7 +4395,7 @@ function update(dt){
   player.y+=player.vy*dt;
 
   for(const p of platforms){
-    if(p.lavaPit) continue;
+    if(p.lavaPit||p.gone) continue;
     const prev_y=player.y-player.vy*dt;
     const pr={x:player.x,y:player.y,w:PLAYER_W,h:PLAYER_H};
     if(overlaps(pr,p)){
@@ -4199,6 +4408,17 @@ function update(dt){
         player.y=p.y-PLAYER_H;
         player.vy=0;
         onAnyGround=true;
+        // a bouncy cap never lets you stand: it throws you straight back up
+        if(p.bounce){
+          player.vy=BOUNCE_VY;
+          onAnyGround=false;
+          screenShake=Math.min(6,screenShake+3);
+          playPowerUp();
+          spawnParticles(player.x+PLAYER_W/2-camX,p.y,14,["#a7f3d0","#34d399","#ffffff"],
+            {minSpd:70,maxSpd:220,upBias:60,minLife:0.2,maxLife:0.5,type:"circle",gravity:200});
+        }
+        // a crumbling shelf starts counting the moment you touch it
+        if(p.crumble && p.crumbleT===undefined && !p.gone) p.crumbleT=CRUMBLE_DELAY;
         if(player.jetFuel<1) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*followerPower().fuelMult*dt);
       } else if(player.vy<0 && prev_y>=p.y+p.h-tol){
         player.y=p.y+p.h; player.vy=0;
@@ -5023,6 +5243,11 @@ function update(dt){
     const targetCamX=player.x+PLAYER_W/2-W*0.33;
     camX=clamp(lerp(camX,targetCamX,dt*3.2),0,Math.max(0,levelWidth-W));
   }
+  // vertical lift: only stages that declare camRise can raise the view, and
+  // it eases back to zero everywhere else
+  const camRise=LEVELS[levelIndex].camRise||0;
+  const wantY=camRise>0?clamp(CAM_LIFT_ANCHOR-player.y,0,camRise):0;
+  camY=lerp(camY,wantY,dt*(camRise>0?3.4:5));
 
   updateParticles(dt);
   updateFloatingTexts(dt);
@@ -5307,15 +5532,19 @@ function loop(now){
   // hit-stop freeze and stops dead the moment the stage does
   if(STATE==="playing") updateRadio(dt);
 
-  // apply screen shake
-  ctx.save();
-  ctx.translate(Math.round(shakeX),Math.round(shakeY));
-
+  // The backdrop is screen space — it must NOT ride the vertical camera, or
+  // climbing would drag a hole up from under it.
   drawBG();
+
+  // apply screen shake, and the vertical camera lift with it
+  ctx.save();
+  ctx.translate(Math.round(shakeX),Math.round(shakeY)+Math.round(camY));
+
   drawStalactites();
   drawLava();
   drawMagmaBursts();
   drawPlatforms();
+  drawVines();
   drawCheckpoint();
   drawCrystals();
   drawPowerUpBoxes();
@@ -5342,8 +5571,8 @@ function loop(now){
   drawWarped(drawPlayer);
   drawFloatingTexts();
 
-  drawFeverOverlay();
   ctx.restore();
+  drawFeverOverlay();   // full-screen, so outside the world transform
 
   drawHUD();
   drawArenaBanners();

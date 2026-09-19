@@ -124,6 +124,12 @@ function run(opts){
   get lavaBalls(){return lavaBalls;},
   get shockwaves(){return shockwaves;},
   get SPECIES(){return SPECIES;},
+  get vines(){return vines;},
+  get vineGrab(){return vineGrab;},
+  get camY(){return camY;},
+  get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
+  vineTip:(v)=>vineTip(v),
+  drawVines:()=>drawVines(),
   drawPtero:(e)=>drawPtero(e),
   drawGroundEnemy:(e)=>drawGroundEnemy(e),
   get bossFlameBursts(){return bossFlameBursts;},
@@ -1555,6 +1561,173 @@ function runSuite(){
   for(let i=0;i<40;i++){ g.player.invuln=999; step(1); }
   g.drawFollowers();
   check('the trike renders in the train', true);
+}
+
+// ── scenario 43: the camera learns to look up ────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(20);
+  check('a flat stage never lifts the view', Math.abs(g.camY)<0.5, g.camY);
+
+  g.loadLevel(4);
+  step(3);
+  check('the climb declares a rise', (g.LEVELS[4].camRise||0)>0, g.LEVELS[4].camRise);
+  // stay low: no lift
+  for(let i=0;i<40;i++){ g.player.invuln=999; g.player.y=380; g.player.vy=0; step(1); }
+  check('standing on the floor keeps the view down', g.camY<1, g.camY);
+  // climb: the view follows
+  for(let i=0;i<80;i++){ g.player.invuln=999; g.player.y=90; g.player.vy=0; step(1); }
+  check('climbing lifts the view', g.camY>150, g.camY);
+  check('...but never past the declared rise', g.camY<=g.LEVELS[4].camRise+0.001, g.camY);
+  // and it comes back down on a flat stage
+  g.loadLevel(3);
+  step(3);
+  for(let i=0;i<60;i++){ g.player.invuln=999; step(1); }
+  check('leaving the climb settles the view', Math.abs(g.camY)<1, g.camY);
+}
+
+// ── scenario 44: swinging on a vine ──────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the climb hangs vines', g.vines.length>=2, g.vines.length);
+  check('nothing is held to start with', g.vineGrab===null);
+
+  // brush past a tip in mid-air
+  const v=g.vines[0];
+  for(let i=0;i<30 && !g.vineGrab;i++){
+    const tip=g.vineTip(v);
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=tip.x-53/2; g.player.y=tip.y-60*0.35;
+    g.player.vy=40; g.player.onGround=false;
+    step(1);
+  }
+  check('touching a tip in mid-air grabs it', g.vineGrab===v, !!g.vineGrab);
+
+  // It swings, and the dino rides it rather than falling. Start from a known
+  // rest position: from a random angle the pendulum can swing out and back to
+  // where it began inside the sample window, which read as "no movement".
+  v.ang=0; v.angVel=0;
+  const ang0=v.ang;
+  keys({ArrowRight:true});
+  for(let i=0;i<30;i++){ g.player.invuln=999; step(1); }
+  keys({ArrowRight:false});
+  check('pumping swings it the way you pushed', v.ang>ang0+0.05,
+        ang0.toFixed(3)+' -> '+v.ang.toFixed(3));
+  const tipNow=g.vineTip(v);
+  check('the dino hangs on the tip',
+        Math.abs((g.player.x+53/2)-tipNow.x)<1.5, g.player.x+53/2-tipNow.x);
+  check('gravity is suspended while hanging', g.player.vy===0, g.player.vy);
+
+  // Jump lets go, and the swing becomes real speed. Measure the TRANSFER,
+  // not just "some velocity": an OR against the release boost passed even
+  // with the horizontal tangent zeroed out.
+  //
+  // Move the vine over open air and give it a known swing first. Released
+  // beside a shelf the dino lands in it on the same frame and the collision
+  // resolver zeroes vx — which made this read 0 at random.
+  v.x=200; v.y=120; v.len=150;
+  step(1);
+  v.ang=0.35; v.angVel=2.0;
+  const expectVx=Math.cos(v.ang)*v.angVel*v.len;
+  check('the swing had real speed to give', Math.abs(expectVx)>20,
+        expectVx.toFixed(1));
+  keys({Space:true});
+  step(1);
+  check('jump releases the vine', g.vineGrab===null);
+  // the release happens after one more frame of pendulum integration, so the
+  // tangent is a little damped by then — check direction and magnitude, not
+  // an exact match
+  check('...carrying the swing out as horizontal speed',
+        Math.sign(g.player.vx)===Math.sign(expectVx) &&
+        Math.abs(g.player.vx)>Math.abs(expectVx)*0.6,
+        'got '+g.player.vx.toFixed(1)+' from '+expectVx.toFixed(1));
+  check('...with a little lift on top', g.player.vy<0, g.player.vy.toFixed(1));
+  // and you cannot instantly re-grab the one you just left
+  const tip2=g.vineTip(v);
+  g.player.x=tip2.x-26; g.player.y=tip2.y-21; g.player.onGround=false;
+  step(1);
+  check('there is a beat before you can grab again', g.vineGrab===null);
+  keys({Space:false});
+  g.drawVines();
+  check('vines render', true);
+}
+
+// ── scenario 45: mushroom shelves give way ───────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99;
+  step(3);
+  const shelf=g.platforms.filter(p=>p.crumble)[0];
+  check('the climb has crumbling shelves', !!shelf);
+  check('a fresh shelf is solid', !shelf.gone && shelf.crumbleT===undefined);
+
+  // stand on it
+  g.player.invuln=999;
+  g.player.x=shelf.x+shelf.w/2-26;
+  g.player.y=shelf.y-g.PLAYER_H-6;
+  g.player.vy=60;
+  for(let i=0;i<10 && shelf.crumbleT===undefined;i++){ g.player.invuln=999; step(1); }
+  check('standing on it starts the countdown', shelf.crumbleT!==undefined,
+        shelf.crumbleT);
+  for(let i=0;i<60 && !shelf.gone;i++){ g.player.invuln=999; step(1); }
+  check('it gives way', shelf.gone===true);
+
+  // while gone it is not there to stand on
+  g.player.x=shelf.x+shelf.w/2-26;
+  g.player.y=shelf.y-g.PLAYER_H-4;
+  g.player.vy=120;
+  for(let i=0;i<4;i++){ g.player.invuln=999; step(1); }
+  check('a dropped shelf cannot be landed on', g.player.y>shelf.y-g.PLAYER_H,
+        g.player.y+' vs '+(shelf.y-g.PLAYER_H));
+
+  // ...and it grows back
+  g.player.x=60; g.player.y=340;
+  for(let i=0;i<260 && shelf.gone;i++){ g.player.invuln=999; g.player.x=60; step(1); }
+  check('it grows back', shelf.gone===false);
+}
+
+// ── scenario 46: bouncy caps ─────────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const cap=g.platforms.filter(p=>p.bounce)[0];
+  check('the climb has a bouncy cap', !!cap);
+  g.player.x=cap.x+cap.w/2-26;
+  g.player.y=cap.y-g.PLAYER_H-6;
+  g.player.vy=200;
+  let launched=false;
+  for(let i=0;i<8 && !launched;i++){
+    g.player.invuln=999; step(1);
+    if(g.player.vy<-400) launched=true;
+  }
+  check('landing on it throws you back up', launched, g.player.vy.toFixed(0));
+  check('...and you never stand on it', g.player.onGround===false);
+}
+
+// ── scenario 47: the canopy is two stages now ────────────────
+{
+  const {g,step}=run({map:true});
+  check('the canopy runs two stages', g.WORLDS[1].levels.length===2,
+        g.WORLDS[1].levels.join(','));
+  g.startWorld(0);
+  g.loadLevel(4);
+  step(3);
+  check('the climb is a forest stage', g.isForest()===true);
+  g.player.hp=99; g.player.invuln=999;
+  for(let i=0;i<30;i++){ g.player.invuln=999; step(1); }
+  g.drawBG(); g.drawPlatforms(); g.drawVines();
+  check('the climb renders', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
