@@ -113,6 +113,15 @@ function run(){
   get continueTimer(){return continueTimer;}, set continueTimer(v){continueTimer=v;},
   get MAX_CONTINUES(){return MAX_CONTINUES;},
   get checkpointX(){return checkpointX;},
+  get weapon(){return weapon;}, set weapon(v){weapon=v;},
+  get weaponAmmo(){return weaponAmmo;}, set weaponAmmo(v){weaponAmmo=v;},
+  get WEAPONS(){return WEAPONS;},
+  get laser(){return laser;},
+  get playerBombs(){return playerBombs;},
+  get weaponPickups(){return weaponPickups;},
+  equipWeapon:(k)=>equipWeapon(k),
+  collectWeaponPickup:(wp)=>collectWeaponPickup(wp),
+  drawWeaponPickups:()=>drawWeaponPickups(),
   get checkpointUsed(){return checkpointUsed;},
   get hitsThisLevel(){return hitsThisLevel;}, set hitsThisLevel(v){hitsThisLevel=v;},
   get levelTime(){return levelTime;}, set levelTime(v){levelTime=v;},
@@ -553,6 +562,119 @@ function runSuite(){
   check('a first grade is a personal best', g.bestGrades[0]==='S', JSON.stringify(g.bestGrades));
   g.drawMissionReport();
   check('the graded debrief renders', true);
+}
+
+// ── scenario 23: the arsenal ─────────────────────────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('a run starts on the base beam', g.weapon==='beam', g.weapon);
+  check('the base beam never runs dry', g.weaponAmmo===Infinity, g.weaponAmmo);
+
+  g.equipWeapon('spread');
+  check('picking up a letter swaps the weapon', g.weapon==='spread', g.weapon);
+  check('...and loads its clock', g.weaponAmmo===g.WEAPONS.spread.ammo, g.weaponAmmo);
+
+  // holding the trigger burns the clock
+  const before=g.weaponAmmo;
+  keys({KeyF:true});
+  for(let i=0;i<20;i++){ g.player.invuln=999; step(1); }
+  check('firing drains the ammo clock', g.weaponAmmo<before,
+        before+' -> '+g.weaponAmmo.toFixed(2));
+
+  // ...and running out hands the base gun back
+  g.weaponAmmo=0.05;
+  for(let i=0;i<20;i++){ g.player.invuln=999; step(1); }
+  keys({KeyF:false});
+  check('an empty clock falls back to the base beam', g.weapon==='beam', g.weapon);
+  check('the fallback is infinite again', g.weaponAmmo===Infinity, g.weaponAmmo);
+
+  // the base beam must NOT drain
+  keys({KeyF:true});
+  for(let i=0;i<30;i++){ g.player.invuln=999; step(1); }
+  keys({KeyF:false});
+  check('the base beam is not on a clock', g.weaponAmmo===Infinity, g.weaponAmmo);
+}
+
+// ── scenario 24: what each letter actually does ──────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  keys({KeyF:true});
+
+  // base: one ray, stops at the first thing it hits
+  step(2);
+  check('the base beam is a single lance',
+        g.laser && (g.laser.ys||[]).length===1, g.laser&&(g.laser.ys||[]).length);
+
+  // spread: three parallel lances, and it pierces
+  g.equipWeapon('spread'); g.weaponAmmo=99;
+  step(2);
+  check('SPREAD fires three parallel lances',
+        g.laser && g.laser.ys.length===3, g.laser&&g.laser.ys.length);
+  check('the three lances are spread vertically',
+        g.laser.ys[0]<g.laser.ys[1] && g.laser.ys[1]<g.laser.ys[2],
+        g.laser&&g.laser.ys.join(','));
+  check('SPREAD punches through', g.laser.piercing===true);
+
+  // flame: very short reach
+  g.equipWeapon('flame'); g.weaponAmmo=99;
+  step(2);
+  check('FLAME trades its reach away', g.laser && g.laser.len<=190, g.laser&&g.laser.len);
+  check('...for a fatter cone', g.laser.thickness>8, g.laser&&g.laser.thickness);
+
+  // rocket: not a beam at all
+  g.equipWeapon('rocket'); g.weaponAmmo=99;
+  g.playerBombs.length=0;
+  step(30);
+  check('ROCKET draws no beam', g.laser===null, g.laser);
+  check('ROCKET launches projectiles', g.playerBombs.length>0, g.playerBombs.length);
+  check('rockets fly flat, not in an arc',
+        g.playerBombs.every(b=>b.straight===true));
+  keys({KeyF:false});
+}
+
+// ── scenario 25: a rocket kills what it touches ──────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const target=g.enemies[0];
+  target.dead=false; target.dying=false; target.hp=99;
+  g.equipWeapon('rocket'); g.weaponAmmo=99;
+  keys({KeyF:true});
+  for(let i=0;i<90;i++){
+    g.player.invuln=999; g.player.facing=1;
+    target.x=g.player.x+200; target.y=g.player.y; target.baseY=target.y;
+    step(1);
+  }
+  keys({KeyF:false});
+  check('a rocket detonates on what it hits', target.hp<99, target.hp);
+}
+
+// ── scenario 26: letter pickups ──────────────────────────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('stage 1 stocks a letter', g.weaponPickups.length>0, g.weaponPickups.length);
+  check('the letter is one of the real weapons',
+        !!g.WEAPONS[g.weaponPickups[0].kind], g.weaponPickups[0].kind);
+  g.drawWeaponPickups();
+  check('letter capsules render', true);
+  const kind=g.weaponPickups[0].kind;
+  g.collectWeaponPickup(g.weaponPickups[0]);
+  check('collecting one equips that letter', g.weapon===kind, g.weapon+' vs '+kind);
+
+  // a continue hands the base gun back — you do not keep a letter through death
+  g.player.invuln=0; g.player.hp=1; g.player.y=900;
+  step(4);
+  g.useContinue();
+  check('a continue takes the letter away', g.weapon==='beam', g.weapon);
 }
 
 // ── scenario 12: walking into the rift (stage with no boss) ───

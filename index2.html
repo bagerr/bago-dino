@@ -448,7 +448,7 @@ const LEVELS = [
     ],
     grounders:[{platX:430,platW:330,spd:55}],
     powerBoxes:[{x:480,y:270},{x:900,y:250}],
-    weapons:[{x:250,y:300,kind:"sulfur"}],
+    weapons:[{x:250,y:300,kind:"spread"}],
     // three captives per stage — the debrief tallies X / 3
     cages:[{x:240,y:318},{x:640,y:238},{x:960,y:278}],
     escapeLine:"EMBER PATH TAHLİYE EDİLDİ",
@@ -493,7 +493,7 @@ const LEVELS = [
     ],
     grounders:[{platX:420,platW:280,spd:60},{platX:820,platW:300,spd:65}],
     powerBoxes:[{x:460,y:240},{x:960,y:240},{x:1180,y:190}],
-    weapons:[{x:720,y:200,kind:"sulfur"},{x:1350,y:300,kind:"magma"}],
+    weapons:[{x:720,y:200,kind:"spread"},{x:1350,y:300,kind:"rocket"}],
     cages:[{x:205,y:308},{x:960,y:268},{x:1180,y:218}],
     escapeLine:"MAGMA KÖPRÜSÜ GERİDE BIRAKILDI",
     // past the arena band: dying to the wave should not replay the run-up
@@ -541,7 +541,7 @@ const LEVELS = [
     ],
     grounders:[{platX:400,platW:240,spd:60},{platX:760,platW:260,spd:70},{platX:1130,platW:670,spd:65}],
     powerBoxes:[{x:430,y:230},{x:820,y:240},{x:1250,y:200}],
-    weapons:[{x:690,y:190,kind:"sulfur"},{x:1460,y:255,kind:"magma"}],
+    weapons:[{x:690,y:190,kind:"flame"},{x:1250,y:160,kind:"spread"},{x:1460,y:255,kind:"rocket"}],
     cages:[{x:480,y:258},{x:880,y:268},{x:1150,y:228}],
     escapeLine:"VOLKAN ÇEKİRDEĞİNDEN KAÇILDI",
     // past the arena, short of BOSS_TRIGGER_X — a death to the Alpha resumes
@@ -800,7 +800,48 @@ function breakPowerUpBox(box){
   applyPowerUp(kinds[Math.floor(Math.random()*kinds.length)]);
 }
 
-// ─── WEAPON PICKUPS: Sulfur Essence (pierce beam) & Magma Crystal (bomb) ──
+// ─── THE ARSENAL (Contra letter pickups) ──────────────────────
+// The base plasma beam never runs out. Everything else is a letter you pick
+// up, fire until the ammo clock empties, and then lose — which is what makes
+// finding one matter and losing one sting.
+//
+// Ammo is measured in SECONDS OF FIRE for every weapon, including the rocket
+// pod (which auto-fires while held). One unit for all four keeps the HUD bar
+// honest and stops "12 rockets vs 6 seconds" from needing two mental models.
+const WEAPONS={
+  beam:   {letter:"B", label:"PLASMA BEAM", color:"#ff8800", ammo:Infinity},
+  spread: {letter:"S", label:"SPREAD BEAM", color:"#3ec6ff", ammo:6.5},
+  rocket: {letter:"R", label:"ROCKET POD",  color:"#ff4477", ammo:5.0},
+  flame:  {letter:"F", label:"FLAME SHRED", color:"#ffaa22", ammo:5.0},
+};
+let weapon="beam";
+let weaponAmmo=Infinity;
+let rocketCd=0;
+
+function equipWeapon(kind){
+  const w=WEAPONS[kind];
+  if(!w) return;
+  weapon=kind; weaponAmmo=w.ammo; rocketCd=0;
+  playPowerUp();
+  spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-28,w.letter+" — "+w.label,w.color,16);
+  queueRadio(null,"SİLAH SİSTEMİ",[w.label+" hazır!","Cephane sınırlı — iyi kullan."],
+    {color:w.color,hold:2.2});
+}
+function dropToBaseWeapon(){
+  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
+  spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-28,"CEPHANE BİTTİ","#ff6677",14);
+  queueRadio(null,"SİLAH SİSTEMİ",["Cephane bitti.","Temel plazmaya dönüldü."],
+    {color:"#ff6677",hold:2.0});
+}
+// a straight-flying rocket, reusing the lava bomb's projectile and splash
+function firePlayerRocket(){
+  const mx=player.x+(player.facing>0?PLAYER_W+2:-4);
+  const my=player.y+PLAYER_H*0.38;
+  playerBombs.push({x:mx,y:my,vx:player.facing*560,vy:0,life:0,straight:true});
+  player.vx-=player.facing*RECOIL_FORCE*0.5;
+  playPew();
+}
+
 POWERUP_INFO.pierce = {label:"PLASMA PIERCE", color:"#3ec6ff", duration:10};
 let weaponPickups=[];
 function initWeaponPickups(){
@@ -810,17 +851,10 @@ function initWeaponPickups(){
 }
 function collectWeaponPickup(wp){
   wp.alive=false;
-  playPowerUp();
-  if(wp.kind==="sulfur"){
-    spawnParticles(wp.x-camX,wp.y,14,["#3ec6ff","#aee9ff","#ffffff"],
-      {minSpd:50,maxSpd:200,minLife:0.3,maxLife:0.6,type:"circle",gravity:100});
-    applyPowerUp("pierce");
-  } else {
-    spawnParticles(wp.x-camX,wp.y,14,["#ff4400","#ff8800","#ffdd44"],
-      {minSpd:50,maxSpd:200,minLife:0.3,maxLife:0.6,type:"square",gravity:160});
-    spawnFloatingText(wp.x-camX,wp.y-14,"LAVA BOMB!","#ff5500",15);
-    firePlayerLavaBomb();
-  }
+  const w=WEAPONS[wp.kind]||WEAPONS.spread;
+  spawnParticles(wp.x-camX,wp.y,16,[w.color,"#ffffff","#aee9ff"],
+    {minSpd:50,maxSpd:210,minLife:0.3,maxLife:0.6,type:"circle",gravity:90});
+  equipWeapon(WEAPONS[wp.kind]?wp.kind:"spread");
 }
 
 // ─── PLAYER LAVA BOMB (Magma Crystal instant attack) ──────────
@@ -2336,6 +2370,16 @@ beamHyperSprite.src="beam_hyper.png";
 const BEAM_CORE_FRAC=0.130, BEAM_HYPER_CORE_FRAC=0.250;
 
 // ─── DRAW CONTINUOUS PLASMA LASER ─────────────────────────────
+// Draws one pass of drawLaser per ray. Swapping laser.mouthY around the
+// existing single-ray renderer keeps that renderer untouched — it is a
+// hundred lines of carefully tuned bloom and sprite fitting.
+function drawLaserAll(){
+  if(!laser) return;
+  const ys=laser.ys||[laser.mouthY];
+  const saved=laser.mouthY;
+  for(const ry of ys){ laser.mouthY=ry; drawLaser(); }
+  laser.mouthY=saved;
+}
 function drawLaser(){
   if(!laser) return;
   const mx=laser.mouthX-camX;
@@ -2491,21 +2535,23 @@ function drawWeaponPickups(){
   for(const wp of weaponPickups){
     if(!wp.alive) continue;
     const wx=wp.x-camX, wy=wp.y+Math.sin(t*1.6+wp.bob)*6;
-    const col = wp.kind==="sulfur" ? "#3ec6ff" : "#ff4400";
-    const col2 = wp.kind==="sulfur" ? "#cdf3ff" : "#ffcc66";
-    glow(col,16+6*Math.sin(t*4+wp.bob));
+    const w=WEAPONS[wp.kind]||WEAPONS.spread;
+    const pulse=0.6+0.4*Math.sin(t*4+wp.bob);
+    // the capsule spins, the letter does not — you have to be able to read it
+    glow(w.color,14+8*pulse);
     ctx.save();
     ctx.translate(wx,wy);
     ctx.rotate(t*1.2+wp.bob);
-    ctx.fillStyle=col;
-    ctx.beginPath();
-    ctx.moveTo(0,-12); ctx.lineTo(9,0); ctx.lineTo(0,12); ctx.lineTo(-9,0);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle=col2;
-    ctx.beginPath();
-    ctx.moveTo(0,-6); ctx.lineTo(4,0); ctx.lineTo(0,6); ctx.lineTo(-4,0);
-    ctx.closePath(); ctx.fill();
+    ctx.fillStyle="rgba(8,6,14,0.85)";
+    ctx.fillRect(-13,-13,26,26);
+    ctx.strokeStyle=w.color; ctx.lineWidth=2;
+    ctx.strokeRect(-13,-13,26,26);
     ctx.restore();
+    ctx.font="bold 17px 'Courier New',monospace";
+    ctx.fillStyle=w.color;
+    ctx.textAlign="center";
+    ctx.fillText(w.letter,wx,wy+6);
+    ctx.textAlign="left";
     noGlow();
   }
 }
@@ -2771,6 +2817,7 @@ function drawHUD(){
   ctx.textAlign="left";
 
   drawPowerUpUI();
+  drawWeaponUI();
 }
 
 // ─── ACTIVE POWER-UP TIMER (top-center) ────────────────────────
@@ -2800,6 +2847,38 @@ function drawPowerUpUI(){
   const secs=Math.max(0,Math.ceil(ap.timer));
   ctx.font="10px 'Courier New',monospace"; ctx.fillStyle="#fff";
   ctx.fillText(`0:${String(secs).padStart(2,"0")}`,W/2,y+35);
+  ctx.textAlign="left";
+}
+
+// ─── EQUIPPED WEAPON (top-centre, under the power-up timer) ───
+function drawWeaponUI(){
+  if(weapon==="beam") return;       // the base gun needs no readout
+  const w=WEAPONS[weapon];
+  const bw2=190,bh2=34,bx2=W/2-bw2/2,by2=player.activePower?50:8;
+  const frac=clamp(weaponAmmo/w.ammo,0,1);
+  const low=frac<0.25;
+  ctx.fillStyle="rgba(0,0,10,0.75)";
+  ctx.fillRect(bx2,by2,bw2,bh2);
+  ctx.shadowColor=w.color; ctx.shadowBlur=low&&Math.sin(t*14)>0?16:8;
+  ctx.strokeStyle=w.color; ctx.lineWidth=2;
+  ctx.strokeRect(bx2,by2,bw2,bh2);
+  noGlow();
+
+  ctx.font="bold 18px 'Courier New',monospace";
+  ctx.fillStyle=w.color;
+  ctx.textAlign="left";
+  ctx.fillText(w.letter,bx2+8,by2+22);
+  ctx.font="bold 11px 'Courier New',monospace";
+  ctx.fillText(w.label,bx2+26,by2+14);
+
+  // ammo clock
+  const barX=bx2+26, barW=bw2-34;
+  ctx.fillStyle="rgba(255,255,255,0.15)";
+  ctx.fillRect(barX,by2+19,barW,6);
+  ctx.fillStyle=low?(Math.sin(t*14)>0?"#ff4466":w.color):w.color;
+  ctx.shadowColor=w.color; ctx.shadowBlur=6;
+  ctx.fillRect(barX,by2+19,barW*frac,6);
+  noGlow();
   ctx.textAlign="left";
 }
 
@@ -3393,7 +3472,15 @@ function update(dt){
   // holding fire keeps a single hitscan ray alive every frame instead of
   // spawning discrete projectile shots
   const hyperActive=player.activePower&&player.activePower.kind==="hyper";
-  const piercing=player.activePower&&player.activePower.kind==="pierce";
+  const isSpread=weapon==="spread", isFlame=weapon==="flame", isRocket=weapon==="rocket";
+  // SPREAD and FLAME are wide by nature, so they punch through everything
+  // they touch the same way the PLASMA PIERCE buff does
+  const piercing=(player.activePower&&player.activePower.kind==="pierce")||isSpread||isFlame;
+  // holding the trigger burns the clock on anything but the base beam
+  if(fire && weapon!=="beam"){
+    weaponAmmo-=dt;
+    if(weaponAmmo<=0) dropToBaseWeapon();
+  }
   if(fire){
     if(!player.wasFiring){
       // recoil kicks once on the rising edge of the trigger, not every frame
@@ -3409,28 +3496,36 @@ function update(dt){
     // fever doubles beam thickness; HYPER BEAM doubles it again on top of that
     let thickness=feverMode?16:8;
     if(hyperActive) thickness*=2;
+    if(isFlame) thickness*=2.2;      // a fat, close-range cone
+    if(isSpread) thickness*=0.8;     // three thinner lances instead of one bar
     // FEVER MODE turns the laser into a screen-spanning Hyper-Beam instead of
-    // the normal ~520px reach
-    const maxRange=feverMode?2000:520;
+    // the normal ~520px reach; FLAME trades nearly all of it away
+    const maxRange=isFlame?190:(feverMode?2000:520);
+    // SPREAD fires three parallel lances, so a flyer overhead and a grounder
+    // below die to the same trigger pull
+    const rayOffsets=isSpread?[-34,0,34]:[0];
 
     // raycast against every living enemy (plus the active boss, if present)
     const targets=[...enemies,...groundEnemies];
     if(boss&&!boss.dead&&boss.introState==="active") targets.push(boss);
     let bestDist=maxRange, bestEnemy=null;
     const pierced=[]; // every enemy the beam passes through, when PLASMA PIERCE is active
+    for(const rayOff of rayOffsets){
+    const rayY=mouthWorldY+rayOff;
     for(const e of targets){
       if(e.dead||e.dying) continue;
       const ex=e.type==="ground" ? e.x : e.x-e.w/2;
       const ey=e.type==="ground" ? e.y : e.y-e.h/2;
-      if(mouthWorldY<ey-thickness/2||mouthWorldY>ey+e.h+thickness/2) continue;
+      if(rayY<ey-thickness/2||rayY>ey+e.h+thickness/2) continue;
       const edgeX=player.facing>0 ? ex : ex+e.w;
       const dist=(edgeX-mouthWorldX)*player.facing;
       if(dist<0||dist>maxRange) continue;
       if(piercing){
-        pierced.push({e,dist});
+        if(!pierced.some(p=>p.e===e)) pierced.push({e,dist});
       } else if(dist<bestDist){
         bestDist=dist; bestEnemy=e;
       }
+    }
     }
 
     laser={
@@ -3439,6 +3534,9 @@ function update(dt){
       // everything, instead of stopping at the first thing it touches
       len:piercing?maxRange:bestDist, thickness,
       fever:!!(feverMode||hyperActive), piercing,
+      // every ray this shot is drawn from, so drawLaserAll and inLaserSweep
+      // both see the full spread rather than just the middle lance
+      ys:rayOffsets.map(o=>mouthWorldY+o),
       hitEnemy:piercing?(pierced[0]&&pierced[0].e):bestEnemy
     };
 
@@ -3463,8 +3561,11 @@ function update(dt){
           e.beamTick=0.05;
           e.hp-=5; // maximum power — shreds almost anything in one or two ticks
         } else {
-          // a bigger escort shortens the interval between damage ticks
-          e.beamTick=(feverMode?0.09:0.18)*followerPower().beamMult;
+          // a bigger escort shortens the interval; FLAME shortens it hard,
+          // which is what pays for its 190px reach
+          let iv=(feverMode?0.09:0.18)*followerPower().beamMult;
+          if(isFlame) iv*=0.45;
+          e.beamTick=iv;
           e.hp-=feverMode?2:1;
         }
         e.hitFlash=0.2;
@@ -3478,7 +3579,14 @@ function update(dt){
       }
     };
 
-    if(piercing){
+    if(isRocket){
+      // the pod is not a beam at all: it auto-fires splash rockets while the
+      // trigger is held, so no ray is drawn and no beam damage is applied
+      laser=null;
+      stopLaserSound();
+      rocketCd-=dt;
+      if(rocketCd<=0){ rocketCd=0.22; firePlayerRocket(); }
+    } else if(piercing){
       for(const hit of pierced){ hit.e._laserDist=hit.dist; applyBeamDamage(hit.e); }
     } else if(bestEnemy){
       bestEnemy._laserDist=bestDist; applyBeamDamage(bestEnemy);
@@ -3695,7 +3803,10 @@ function update(dt){
     if(!laser) return false;
     const reach=laser.mouthX+laser.dir*laser.len;
     const withinX = laser.dir>0 ? (x>=laser.mouthX&&x<=reach) : (x<=laser.mouthX&&x>=reach);
-    return withinX && Math.abs(y-laser.mouthY)<tolerance;
+    if(!withinX) return false;
+    // SPREAD has three lances; a cage under the low one has to break too
+    const ys=laser.ys||[laser.mouthY];
+    return ys.some(ly=>Math.abs(y-ly)<tolerance);
   };
 
   // ── power-up boxes: break on touch or when the laser sweeps over one ──
@@ -3898,16 +4009,27 @@ function update(dt){
   // with an enemy, a cage, or the ground/lava
   for(let i=playerBombs.length-1;i>=0;i--){
     const b=playerBombs[i];
-    b.vy+=520*dt;
+    if(!b.straight) b.vy+=520*dt;   // rockets fly flat; lava bombs arc
     b.x+=b.vx*dt; b.y+=b.vy*dt;
     b.life+=dt;
     let exploded=false;
-    if(b.y>=LAVA_Y||b.life>3){ exploded=true; }
+    if(b.y>=LAVA_Y||b.life>(b.straight?1.1:3)){ exploded=true; }
     if(!exploded){
       for(const pf of platforms){
         if(pf.lavaPit) continue;
         if(b.x>=pf.x&&b.x<=pf.x+pf.w&&b.y>=pf.y&&b.vy>0){ b.y=pf.y; exploded=true; break; }
       }
+    }
+    if(!exploded){
+      // contact detonation — the splash in explodePlayerBomb does the damage,
+      // but without this a rocket would sail straight through its target
+      for(const e of [...enemies,...groundEnemies]){
+        if(e.dead||e.dying) continue;
+        if(overlaps({x:b.x-6,y:b.y-6,w:12,h:12},{x:e.x,y:e.y,w:e.w,h:e.h})){ exploded=true; break; }
+      }
+      if(!exploded && boss && !boss.dead && boss.introState==="active" &&
+         overlaps({x:b.x-6,y:b.y-6,w:12,h:12},
+                  {x:boss.x-boss.w/2,y:boss.y-boss.h/2,w:boss.w,h:boss.h})) exploded=true;
     }
     if(!exploded){
       for(const cage of cages){
@@ -4144,6 +4266,7 @@ function useContinue(){
   player.dashTimer=0; player.dashCooldown=0;
   chain=0; chainTimer=0; feverMode=false; feverFlash=0;
   screenShake=0; bossShakeTimer=0; hitStopTimer=0;
+  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
   loadLevel(levelIndex);
   if(resumeAt!==null && isFinite(resumeAt)){
     checkpointUsed=true;              // loadLevel disarmed it; it stays earned
@@ -4210,6 +4333,7 @@ function restartGame(){
   STATE="playing"; stateTimer=0; reportTimer=0;
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
   continuesLeft=MAX_CONTINUES; continueTimer=0;
+  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
   screenShake=0; bossShakeTimer=0;
   loadLevel(0);  // back to stage 1 — also resets position, camera and all entities
 }
@@ -4260,7 +4384,7 @@ function loop(now){
   drawScaredBabies();          // ...and the ones that bolted, which do NOT warp
   drawBabyShots();
 
-  drawLaser();
+  drawLaserAll();
   drawParticles();
   drawWarped(drawPlayer);
   drawFloatingTexts();
