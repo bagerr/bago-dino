@@ -693,7 +693,7 @@ const LEVELS = [
       {platX:740,platW:460,spd:54,species:"forest_crawler"},
     ],
     powerBoxes:[{x:450,y:205},{x:960,y:110}],
-    weapons:[{x:180,y:300,kind:"spread"}],
+    weapons:[{x:180,y:300,kind:"spread"},{x:880,y:190,kind:"seed"}],
     cages:[{x:1015,y:138,species:"trike"}],
     escapeLine:"KANOPİNİN TEPESİNE ÇIKILDI",
     checkpoint:700, parTime:90,
@@ -702,6 +702,51 @@ const LEVELS = [
     boss:{x:1010,triggerX:900,hp:14,kind:"flyer",w:150,h:112,
           sprite:"boss_forest.png", summons:"forest_flyer",
           name:"KANOPİ KRALİÇESİ", title:"ZEHİRLİ ÇATININ ANASI"},
+  },
+  { // ── STAGE 6 — Rotwood Rise (the canopy's pressure stage)
+    // The rot rises behind you. There is no way to fight it and no way to
+    // wait it out: the only answer is to keep climbing. A vine curtain seals
+    // the high route until you burn it, which is the first time a weapon
+    // letter is a key rather than a damage number.
+    name:"ROTWOOD RISE", theme:"forest",
+    width:1100,
+    camRise:320,
+    fog:{startY:GROUND_Y+130, topY:150, rise:8},
+    platforms:[
+      {x:-200,y:GROUND_Y,w:480,h:76},
+      {x:280, y:GROUND_Y,w:140,h:76,lavaPit:true},
+      {x:420, y:GROUND_Y,w:680,h:76},
+      {x:140, y:350,w:110,h:18},
+      {x:330, y:300,w:100,h:18,crumble:true},
+      {x:500, y:255,w:110,h:18},
+      {x:520, y:120,w:24, h:132,curtain:true},
+      {x:660, y:210,w:110,h:18,crumble:true},
+      {x:820, y:165,w:110,h:18},
+      {x:950, y:110,w:140,h:18,goal:true},
+    ],
+    lavaPits:[{x:280,w:140}],
+    vines:[{x:620,y:60,len:120}],
+    crystals:[{x:760,y:370},{x:800,y:380}],
+    coins:()=>[
+      ...coinArcOver(140,350,110,4),
+      ...coinArcOver(330,300,100,4),
+      ...coinArcOver(500,255,110,4),
+      ...coinArcOver(660,210,110,4),
+      ...coinArcOver(820,165,110,4),
+    ],
+    flyers:[{x:600,y:150,patrol:[460,900],spd:76,species:"forest_flyer"}],
+    grounders:[
+      {fixed:{x:470,y:GROUND_Y},species:"forest_plant"},
+      {platX:420,platW:680,spd:56,species:"forest_crawler"},
+    ],
+    powerBoxes:[{x:500,y:205},{x:820,y:115}],
+    // the flame comes BEFORE the curtain on purpose
+    weapons:[{x:200,y:300,kind:"flame"},{x:700,y:160,kind:"seed"}],
+    cages:[{x:875,y:143,species:"trike"}],
+    escapeLine:"ÇÜRÜME SUYUNDAN KAÇILDI",
+    checkpoint:600, parTime:95,
+    arena:null,
+    boss:null,
   },
 ];
 
@@ -712,7 +757,7 @@ const LEVELS = [
 const WORLDS=[
   {id:"volcano", name:"VOLCANO CORE", sub:"LAV ÇEKİRDEĞİ",   levels:[0,1,2],
    mx:0.17, my:0.66, color:"#ff6a2a"},
-  {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,4],
+  {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,5,4],
    mx:0.40, my:0.33, color:"#10b981"},
   {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[],
    mx:0.63, my:0.62, color:"#7dd3fc"},
@@ -1142,6 +1187,7 @@ const WEAPONS={
   spread: {letter:"S", label:"SPREAD BEAM", color:"#3ec6ff", ammo:6.5},
   rocket: {letter:"R", label:"ROCKET POD",  color:"#ff4477", ammo:5.0},
   flame:  {letter:"F", label:"FLAME SHRED", color:"#ffaa22", ammo:5.0},
+  seed:   {letter:"T", label:"SİSMİK TOHUM",color:"#22c55e", ammo:5.5},
 };
 let weapon="beam";
 let weaponAmmo=Infinity;
@@ -1170,6 +1216,16 @@ function firePlayerRocket(){
   player.vx-=player.facing*RECOIL_FORCE*0.5;
   playPew();
 }
+// The canopy's own weapon: a seed lobbed on an arc that erupts into a vine
+// burst where it lands. Slower than the rocket pod, wider blast, and it
+// reaches over a ledge instead of through it.
+function firePlayerSeed(){
+  const mx=player.x+(player.facing>0?PLAYER_W+2:-4);
+  const my=player.y+PLAYER_H*0.30;
+  playerBombs.push({x:mx,y:my,vx:player.facing*330,vy:-320,life:0,seed:true});
+  player.vx-=player.facing*RECOIL_FORCE*0.4;
+  playPew();
+}
 
 POWERUP_INFO.pierce = {label:"PLASMA PIERCE", color:"#3ec6ff", duration:10};
 let weaponPickups=[];
@@ -1196,10 +1252,27 @@ function firePlayerLavaBomb(){
 }
 function explodePlayerBomb(bomb){
   const ex=bomb.x-camX, ey=bomb.y;
-  spawnParticles(ex,ey,22,["#ff4400","#ff8800","#ffdd44","#ffffff"],
-    {minSpd:100,maxSpd:300,minLife:0.3,maxLife:0.7,type:"circle",gravity:180});
-  screenShake=Math.min(6,screenShake+5);
-  hitStopTimer=Math.max(hitStopTimer,0.05);
+  const seed=!!bomb.seed;
+  // the seed erupts wider than a bomb and throws its debris upward
+  const radius=seed?110:70;
+  spawnParticles(ex,ey,seed?30:22,
+    seed?["#22c55e","#4ade80","#a7f3d0","#ffffff"]:["#ff4400","#ff8800","#ffdd44","#ffffff"],
+    {minSpd:100,maxSpd:seed?340:300,upBias:seed?120:0,
+     minLife:0.3,maxLife:seed?0.9:0.7,type:seed?"square":"circle",gravity:seed?120:180});
+  if(seed){
+    // a ring of vines whipping up out of the ground
+    for(let i=0;i<10;i++){
+      const a=(i/10)*Math.PI-Math.PI;
+      particles.push({
+        x:ex+Math.cos(a)*30, y:ey,
+        vx:Math.cos(a)*90, vy:-rnd(180,320),
+        life:1, maxLife:rnd(0.4,0.8),
+        color:"#2f6b3d", size:rnd(3,7), type:"square", gravity:420
+      });
+    }
+  }
+  screenShake=Math.min(6,screenShake+(seed?6:5));
+  hitStopTimer=Math.max(hitStopTimer,seed?0.07:0.05);
   playExplosion();
   // heavy splash damage to every enemy (and the boss) within the blast radius
   const targets=[...enemies,...groundEnemies];
@@ -1207,7 +1280,7 @@ function explodePlayerBomb(bomb){
   for(const e of targets){
     if(e.dead||e.dying) continue;
     const ecx=e.type==="ground"?e.x+e.w/2:e.x, ecy=e.y;
-    if(Math.hypot(ecx-bomb.x,ecy-bomb.y)<70){
+    if(Math.hypot(ecx-bomb.x,ecy-bomb.y)<radius){
       e.hp-=e.type==="boss"?4:99;
       e.hitFlash=0.3;
       if(e.hp<=0 && !e.dying){ e.dying=true; e.deathTimer=0.07; }
@@ -1817,7 +1890,7 @@ function initBoss(){
     name:spec.name||"ALFA PTERODACTYL", title:spec.title||"",
     kind:spec.kind||"flyer",
     art:spec.sprite||"enemyboss.png", rageArt:spec.rageSprite||null,
-    summons:spec.summons||null, summoned:false,
+    summons:spec.summons||null,
     phase:1,               // flips to 2 at half health — see enterBossPhase2
     diveState:"none", diveTimer:0, diveCooldown:rnd(3,5), diveDir:-1,
     stompCooldown:2.2, walkDir:-1,
@@ -1884,6 +1957,62 @@ function finishWorld(){
   playPowerUp();
 }
 
+// ─── THE RISING TIDE ──────────────────────────────────────────
+// A stage can declare `fog`: a sheet of spore-thick air that climbs from
+// below and burns anything still under it. It is the only pressure in the
+// game that is not an enemy — you cannot kill it, you can only out-climb it.
+let fogY=Infinity, fogHurt=0;
+function initFog(){
+  const f=LEVELS[levelIndex].fog;
+  fogY=f?f.startY:Infinity;
+  fogHurt=0;
+}
+function updateFog(dt){
+  const f=LEVELS[levelIndex].fog;
+  if(!f) return;
+  fogY=Math.max(f.topY,fogY-f.rise*dt);
+  if(fogHurt>0) fogHurt-=dt;
+  // standing in it burns, on a cooldown rather than every frame
+  if(player.y+PLAYER_H>fogY && player.invuln<=0 && fogHurt<=0){
+    fogHurt=1.1;
+    takeDamage("enemy");
+    spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-18,"ZEHİR!","#6ee7b7",14);
+  }
+  // spores boiling off the surface
+  if(Math.random()<dt*40){
+    particles.push({
+      x:rnd(0,W), y:fogY+rnd(-6,18),
+      vx:rnd(-14,14), vy:-rnd(12,44),
+      life:1, maxLife:rnd(0.8,1.8),
+      color:Math.random()<0.5?"rgba(110,231,183,0.6)":"rgba(34,197,94,0.5)",
+      size:rnd(2,5), type:"circle", gravity:-8
+    });
+  }
+}
+function drawFog(){
+  if(!isFinite(fogY)) return;
+  const top=fogY;
+  if(top>H+camY) return;
+  ctx.save();
+  const g=ctx.createLinearGradient(0,top-30,0,top+120);
+  g.addColorStop(0,"rgba(34,197,94,0)");
+  g.addColorStop(0.25,"rgba(22,163,74,0.45)");
+  g.addColorStop(1,"rgba(6,78,59,0.85)");
+  ctx.fillStyle=g;
+  ctx.fillRect(-200,top-30,W+400,H*2);
+  // a wobbling surface line, same trick as the lava
+  glow("#6ee7b7",16);
+  ctx.strokeStyle="rgba(167,243,208,0.9)"; ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let i=-40;i<=W+40;i+=12){
+    const wx=(camX+i)/22;
+    const hh=4*Math.sin(t*1.8+wx)+2*Math.sin(t*2.7+wx*1.5);
+    i===-40?ctx.moveTo(i,top+hh):ctx.lineTo(i,top+hh);
+  }
+  ctx.stroke(); noGlow();
+  ctx.restore();
+}
+
 // ─── CRUMBLING SHELVES ────────────────────────────────────────
 // A mushroom shelf holds your weight for CRUMBLE_DELAY, shakes while it
 // decides, drops away, and grows back. Platforms are per-stage COPIES, so
@@ -1900,6 +2029,15 @@ function updateCrumbles(dt){
       p.crumbleT-=dt;
       if(p.crumbleT<=0){
         p.gone=true; p.respawnT=CRUMBLE_RESPAWN; p.crumbleT=undefined;
+        // anything standing on it goes down with it — the canopy's own way
+        // of turning terrain into a weapon
+        for(const e of groundEnemies){
+          if(e.dead||e.dying||e.turret) continue;
+          if(e.x+e.w>p.x && e.x<p.x+p.w && Math.abs((e.y+e.h)-p.y)<10){
+            e.dying=true; e.deathTimer=0.07;
+            spawnFloatingText(e.x+e.w/2-camX,e.y-10,"DÜŞTÜ!","#6ee7b7",14);
+          }
+        }
         playExplosion();
         spawnParticles(p.x+p.w/2-camX,p.y+6,16,["#6ee7b7","#2f6b3d","#4b9e5b"],
           {minSpd:50,maxSpd:190,minLife:0.4,maxLife:0.9,type:"square",gravity:420,minSz:2,maxSz:6});
@@ -1942,7 +2080,7 @@ function loadLevel(i){
   levelHasBoss=!!L.boss;
   BOSS_TRIGGER_X=L.boss?L.boss.triggerX:Infinity;
 
-  initCoins(); initEnemies(); initGroundEnemies(); initVines();
+  initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog();
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 
   // clear anything left over from the previous stage
@@ -2348,6 +2486,37 @@ function drawPlatforms(){
         ctx.fillText("SEALED",gx,gy-gateH/2);
       }
       ctx.textAlign="left";
+    } else if(p.curtain){
+      // a hanging curtain of thorned vines — a wall until it is burned
+      const burn=p.burnT===undefined?1:clamp(p.burnT,0,1);
+      ctx.save();
+      ctx.globalAlpha=0.35+0.65*burn;
+      for(let i=0;i<5;i++){
+        const vx2=px+4+i*((p.w-8)/4);
+        ctx.strokeStyle=i%2?"#2f6b3d":"#3f8a4c";
+        ctx.lineWidth=5;
+        ctx.beginPath();
+        ctx.moveTo(vx2,p.y);
+        for(let yy=0;yy<=p.h;yy+=14){
+          ctx.lineTo(vx2+Math.sin(t*1.4+yy*0.05+i)*3,p.y+yy);
+        }
+        ctx.stroke();
+      }
+      ctx.fillStyle="#4ade80";
+      for(let i=0;i<6;i++){
+        const ly=p.y+((i*p.h/6)+((t*10)%(p.h/6)));
+        ctx.beginPath(); ctx.ellipse(px+p.w/2+Math.sin(t+i)*6,ly,6,3,0.6,0,Math.PI*2); ctx.fill();
+      }
+      if(burn<1){
+        // embers creeping up it while it burns
+        glow("#ffaa22",14);
+        ctx.strokeStyle="#ffaa22"; ctx.lineWidth=3;
+        ctx.beginPath();
+        ctx.moveTo(px,p.y+p.h*burn); ctx.lineTo(px+p.w,p.y+p.h*burn);
+        ctx.stroke();
+        noGlow();
+      }
+      ctx.restore();
     } else {
       // obsidian rock platform: a dark body with the ground.png surface laid
       // along its top. Identical treatment for the cave floor and the
@@ -4253,6 +4422,7 @@ function update(dt){
   const dashKey = K["ShiftLeft"]||K["ShiftRight"];
 
   updateCrumbles(dt);
+  updateFog(dt);
   updateVines(dt,left,right,jump);
   // hanging from a vine suspends the dino's own physics entirely — the
   // pendulum owns its position until it lets go
@@ -4462,6 +4632,7 @@ function update(dt){
   // spawning discrete projectile shots
   const hyperActive=player.activePower&&player.activePower.kind==="hyper";
   const isSpread=weapon==="spread", isFlame=weapon==="flame", isRocket=weapon==="rocket";
+  const isSeed=weapon==="seed";
   // SPREAD and FLAME are wide by nature, so they punch through everything
   // they touch the same way the PLASMA PIERCE buff does
   const piercing=(player.activePower&&player.activePower.kind==="pierce")||isSpread||isFlame;
@@ -4590,7 +4761,13 @@ function update(dt){
       }
     };
 
-    if(isRocket){
+    if(isSeed){
+      // same trigger discipline as the pod, slower cadence, no beam
+      laser=null;
+      stopLaserSound();
+      rocketCd-=dt;
+      if(rocketCd<=0){ rocketCd=0.55; firePlayerSeed(); }
+    } else if(isRocket){
       // the pod is not a beam at all: it auto-fires splash rockets while the
       // trigger is held, so no ray is drawn and no beam damage is applied
       laser=null;
@@ -4889,6 +5066,26 @@ function update(dt){
   }
   weaponPickups=weaponPickups.filter(w=>w.alive);
 
+  // ── vine curtains: solid until something burns them away ──
+  // Only FLAME clears one. It is the first thing in the game that makes a
+  // weapon letter a key rather than a damage number.
+  for(const p of platforms){
+    if(!p.curtain||p.gone) continue;
+    if(isFlame && fire && inLaserSweep(p.x+p.w/2,p.y+p.h/2,p.h/2)){
+      p.burnT=(p.burnT===undefined?1:p.burnT)-dt*2.4;
+      spawnParticles(p.x+p.w/2-camX,p.y+rnd(0,p.h),2,["#ffaa22","#ff6600","#2f6b3d"],
+        {minSpd:30,maxSpd:120,upBias:60,minLife:0.2,maxLife:0.5,type:"square",gravity:60});
+      if(p.burnT<=0){
+        p.gone=true; p.respawnT=Infinity;   // burned curtains stay burned
+        playExplosion();
+        screenShake=Math.min(6,screenShake+4);
+        spawnFloatingText(p.x+p.w/2-camX,p.y+p.h/2,"YOL AÇILDI","#ffaa22",15);
+        spawnParticles(p.x+p.w/2-camX,p.y+p.h/2,22,["#ffaa22","#ff6600","#2f6b3d","#4ade80"],
+          {minSpd:60,maxSpd:220,minLife:0.3,maxLife:0.8,type:"square",gravity:200});
+      }
+    }
+  }
+
   // ── captive cages: ONLY break by being shot (laser or lava bomb), never
   // by simply walking into them — freeing the baby dino takes a real hit ──
   for(const cage of cages){
@@ -5147,6 +5344,7 @@ function update(dt){
     b.life+=dt;
     let exploded=false;
     if(b.y>=LAVA_Y||b.life>(b.straight?1.1:3)){ exploded=true; }
+    if(b.seed && b.life>2.2) exploded=true;
     if(!exploded){
       for(const pf of platforms){
         if(pf.lavaPit) continue;
@@ -5322,10 +5520,9 @@ function enterBossPhase2(){
   // stage 1's drone comes apart: same fight, visibly wrecked
   if(boss.rageArt) boss.art=boss.rageArt;
   // ...and a boss that can call for help does it here, once
-  if(boss.summons && !boss.summoned){
-    boss.summoned=true;
-    summonSwarm(boss.summons,2);
-  }
+  // enterBossPhase2 only ever runs on the phase 1 -> 2 edge, so this needs
+  // no "already summoned" flag of its own
+  if(boss.summons) summonSwarm(boss.summons,2);
   bossRageTimer=2.2;
   boss.fireCooldown=Math.min(boss.fireCooldown,0.7);
   hitStopTimer=Math.max(hitStopTimer,0.12);
@@ -5582,6 +5779,7 @@ function loop(now){
   drawMagmaBursts();
   drawPlatforms();
   drawVines();
+  drawFog();
   drawCheckpoint();
   drawCrystals();
   drawPowerUpBoxes();

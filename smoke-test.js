@@ -125,6 +125,8 @@ function run(opts){
   get shockwaves(){return shockwaves;},
   get SPECIES(){return SPECIES;},
   get vines(){return vines;},
+  get fogY(){return fogY;}, set fogY(v){fogY=v;},
+  drawFog:()=>drawFog(),
   get vineGrab(){return vineGrab;},
   get camY(){return camY;},
   get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
@@ -1718,7 +1720,10 @@ function runSuite(){
 // ── scenario 47: the canopy is two stages now ────────────────
 {
   const {g,step}=run({map:true});
-  check('the canopy runs two stages', g.WORLDS[1].levels.length===2,
+  check('the canopy runs three stages', g.WORLDS[1].levels.length===3,
+        g.WORLDS[1].levels.join(','));
+  check('the queen is saved for last',
+        g.WORLDS[1].levels[g.WORLDS[1].levels.length-1]===4,
         g.WORLDS[1].levels.join(','));
   g.startWorld(0);
   g.loadLevel(4);
@@ -1768,6 +1773,139 @@ function runSuite(){
   const stillAlive=g.enemies.length;
   check('the swarm is called once, not every frame', stillAlive===after,
         after+' -> '+stillAlive);
+}
+
+// ── scenario 50: the rising rot ──────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(10);
+  check('an ordinary stage has no tide', !isFinite(g.fogY), g.fogY);
+
+  g.loadLevel(5);
+  step(3);
+  check('rotwood declares a tide', isFinite(g.fogY), g.fogY);
+  const start=g.fogY;
+  for(let i=0;i<120;i++){ g.player.invuln=999; g.player.y=140; g.player.vy=0; step(1); }
+  check('it climbs', g.fogY<start, start+' -> '+g.fogY.toFixed(0));
+  g.drawFog();
+  check('the tide renders', true);
+
+  // It stops at the declared ceiling rather than swallowing the whole stage.
+  // Waiting out the full rise would add forty seconds of simulation, so put
+  // it just under the ceiling and check that it clamps instead of passing it.
+  g.fogY=g.LEVELS[5].fog.topY+5;
+  for(let i=0;i<60;i++){ g.player.invuln=999; g.player.y=100; g.player.vy=0; step(1); }
+  check('it stops at the declared ceiling',
+        Math.abs(g.fogY-g.LEVELS[5].fog.topY)<0.001, g.fogY);
+
+  // standing in it burns
+  g.player.invuln=0; g.player.hp=9;
+  g.player.y=g.fogY+40; g.player.vy=0;
+  const hp0=g.player.hp;
+  for(let i=0;i<10 && g.player.hp===hp0;i++){
+    g.player.invuln=0; g.player.y=g.fogY+40; step(1);
+  }
+  check('standing in the rot burns', g.player.hp<hp0, hp0+' -> '+g.player.hp);
+}
+
+// ── scenario 51: the vine curtain is a locked door ───────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  // Clear the stage's weapon capsules first: a beam COLLECTS a pickup it
+  // sweeps, and the seed capsule sitting behind the curtain was quietly
+  // swapping the weapon out from under this scenario.
+  for(const wp of g.weaponPickups) wp.alive=false;
+  const curtain=g.platforms.filter(p=>p.curtain)[0];
+  check('rotwood hangs a curtain', !!curtain);
+  check('it starts solid', curtain.gone!==true);
+
+  // it is a wall: walking into it does not get you through
+  g.player.x=curtain.x-53-4;
+  g.player.y=curtain.y+curtain.h-60;
+  keys({ArrowRight:true});
+  for(let i=0;i<40;i++){ g.player.invuln=999; g.player.y=curtain.y+curtain.h-60; step(1); }
+  keys({ArrowRight:false});
+  check('a curtain blocks the way', g.player.x<curtain.x+1,
+        g.player.x.toFixed(1)+' vs '+curtain.x);
+
+  // the wrong weapon will not clear it
+  g.equipWeapon('spread'); g.weaponAmmo=99;
+  g.player.x=curtain.x-120; g.player.y=curtain.y+curtain.h/2; g.player.facing=1;
+  keys({KeyF:true});
+  for(let i=0;i<60;i++){
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=curtain.x-120; g.player.y=curtain.y+curtain.h/2-24;
+    step(1);
+  }
+  check('the beam does not burn it', curtain.gone!==true, curtain.burnT);
+
+  // FLAME does
+  g.equipWeapon('flame'); g.weaponAmmo=99;
+  for(let i=0;i<120 && !curtain.gone;i++){
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=curtain.x-110; g.player.y=curtain.y+curtain.h/2-24;
+    g.weaponAmmo=99;
+    step(1);
+  }
+  keys({KeyF:false});
+  check('FLAME burns it away', curtain.gone===true, curtain.burnT);
+  check('and a burned curtain stays burned', curtain.respawnT===Infinity,
+        curtain.respawnT);
+  g.drawPlatforms();
+  check('curtains render', true);
+}
+
+// ── scenario 52: the seismic seed ────────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the canopy stocks its own letter', !!g.WEAPONS.seed, Object.keys(g.WEAPONS).join(','));
+  check('it is T for tohum', g.WEAPONS.seed.letter==='T', g.WEAPONS.seed.letter);
+  g.equipWeapon('seed'); g.weaponAmmo=99;
+  check('equipping it takes', g.weapon==='seed', g.weapon);
+  g.playerBombs.length=0;
+  keys({KeyF:true});
+  for(let i=0;i<40 && g.playerBombs.length===0;i++){ g.player.invuln=999; step(1); }
+  keys({KeyF:false});
+  check('it lobs seeds', g.playerBombs.length>0, g.playerBombs.length);
+  check('a seed arcs rather than flying flat',
+        g.playerBombs.every(b=>b.seed===true && !b.straight));
+  check('...and is thrown upward first', g.playerBombs[0].vy<0,
+        g.playerBombs[0].vy);
+  check('no beam while seeding', g.laser===null);
+}
+
+// ── scenario 53: a shelf takes its passengers down ───────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const shelf=g.platforms.filter(p=>p.crumble)[0];
+  const rider=g.groundEnemies.filter(e=>!e.turret&&!e.dead)[0];
+  check('there is a shelf and something to stand on it', !!shelf && !!rider);
+  // park the crawler on the shelf and drop it
+  rider.x=shelf.x+10; rider.y=shelf.y-rider.h;
+  rider.patrolMin=shelf.x; rider.patrolMax=shelf.x+shelf.w-rider.w;
+  rider.vx=0;
+  shelf.crumbleT=0.02;
+  for(let i=0;i<12 && !shelf.gone;i++){
+    rider.x=shelf.x+10; rider.y=shelf.y-rider.h;
+    g.player.invuln=999; step(1);
+  }
+  check('the shelf drops', shelf.gone===true);
+  check('its passenger goes down with it', rider.dying===true||rider.dead===true,
+        'dying='+rider.dying+' dead='+rider.dead);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

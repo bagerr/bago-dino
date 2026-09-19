@@ -56,6 +56,8 @@ Two more traps worth knowing before writing a scenario:
 - **The boss trigger is gated on the arena wave.** To reach it, first mark every enemy with `arenaEnemy` as `dead`, otherwise the camera lock pins the player inside the band and `arenaCleared` never flips.
 - **`drawPlatforms()` culls off-screen platforms.** Any probe that measures what the exit portal draws has to scroll `camX` onto the goal platform first, or it measures an empty loop body and passes for the wrong reason.
 - **Pin the state a physics assertion depends on.** Two vine checks were flaky for the same reason: a pendulum sampled at a fixed frame count can be anywhere in its arc. Measuring the pump from a random start read as "no movement" when it swung out and back; the release velocity read as zero when the dino landed in a shelf on the release frame and the collision resolver zeroed `vx`. Set the angle, the velocity and the surroundings first, then measure.
+- **A beam collects pickups it sweeps.** A curtain scenario was quietly having its weapon swapped mid-test because the spread beam reached a capsule behind the curtain. If a scenario cares which weapon is equipped, clear `weaponPickups` first.
+- **Do not simulate a slow process in real time.** Waiting out the full fog rise is forty seconds of frames. Put the state just short of its limit and assert that it clamps.
 - **Isolate the scenario from the rest of the stage.** The canopy is full of things that shoot: a spitter's spore ball was being measured as if the dragonfly had dropped it, and a second spitter fired during an "out of range" check. Kill everything you are not measuring.
 - **Vary the input you claim to be testing.** A spitter's tracking was checked only from the right, where the correct answer and a hardcoded `1` agree; testing from both sides is what catches it. Same failure mode as the grade weighting and the grounded shockwave rule.
 - **Check the drawing, not just the physics.** A mis-anchored platform sprite passes every collision test ever written — the dino still stands at `p.y`, the art is just in the wrong place. The stubbed context records `drawImage` calls in `drawStats.images`, which is how both `ground.png`'s source row and `forest_ground.png`'s three bands are pinned. Note `drawPlatforms()` draws every visible platform, so narrow the recorded bands to the one ledge being measured.
@@ -84,6 +86,16 @@ Each stage names a **biome** with `theme`, and `THEMES` holds that biome's liqui
 **Vines** are pendulums. Brushing a tip in mid-air grabs it, left/right pumps the swing, and jump releases with the tangential velocity (`cos/-sin` of the angle times `angVel*len`) plus a small lift — a released swing carries further than any jump, which is the point. While `vineGrab` is set, `update()` returns early: the pendulum owns the dino's position, so its own gravity and collision must not run. `vineCooldown` stops an instant re-grab.
 
 **Mushroom shelves** (`crumble`) and **bouncy caps** (`bounce`) are platform flags with runtime state living on the platform objects themselves — safe because `loadLevel` copies them per stage. A `gone` shelf is skipped by both the collision loop and the draw pass; it rattles harder the closer it is to letting go, then grows back.
+
+### Canopy hazards and the seed
+
+**The rising tide** (`fog` on a stage) is the only pressure in the game that is not an enemy: `fogY` climbs at `rise` px/s, clamps at `topY`, and burns anything under it on a cooldown rather than every frame. You cannot fight it or wait it out, only out-climb it.
+
+**Vine curtains** are platforms with `curtain:true`. They are solid — the ordinary AABB resolver does the blocking — until FLAME sweeps them, which is the first time a weapon letter is a key rather than a damage number. A burned curtain sets `respawnT = Infinity` so it reuses the crumbling-shelf `gone` plumbing without ever growing back.
+
+**Crumbling shelves take their passengers down**: when one drops, any ground enemy standing on it dies with it, which makes the terrain a weapon.
+
+**T — SİSMİK TOHUM** is the canopy's letter: a seed lobbed on an arc that erupts into a vine burst with a 110px radius (the rocket's is 70) and throws its debris upward. It reuses `playerBombs` with `seed:true`, so gravity, contact detonation and splash already work; only the radius, the particles and the fuse differ.
 
 ### Species
 
