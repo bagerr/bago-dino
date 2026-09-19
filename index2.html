@@ -698,7 +698,10 @@ const LEVELS = [
     escapeLine:"KANOPİNİN TEPESİNE ÇIKILDI",
     checkpoint:700, parTime:90,
     arena:null,
-    boss:null,
+    // the canopy's finale, waiting at the top of the climb
+    boss:{x:1010,triggerX:900,hp:14,kind:"flyer",w:150,h:112,
+          sprite:"boss_forest.png", summons:"forest_flyer",
+          name:"KANOPİ KRALİÇESİ", title:"ZEHİRLİ ÇATININ ANASI"},
   },
 ];
 
@@ -1814,6 +1817,7 @@ function initBoss(){
     name:spec.name||"ALFA PTERODACTYL", title:spec.title||"",
     kind:spec.kind||"flyer",
     art:spec.sprite||"enemyboss.png", rageArt:spec.rageSprite||null,
+    summons:spec.summons||null, summoned:false,
     phase:1,               // flips to 2 at half health — see enterBossPhase2
     diveState:"none", diveTimer:0, diveCooldown:rnd(3,5), diveDir:-1,
     stompCooldown:2.2, walkDir:-1,
@@ -3271,16 +3275,17 @@ function drawBossFlameBursts(){
     if(fb.life<=0.4){
       // telegraph: a thin pulsing warning line before the column ignites
       const warn=0.4+0.4*Math.sin(t*20);
-      ctx.strokeStyle=`rgba(255,80,0,${warn})`; ctx.lineWidth=3;
+      ctx.strokeStyle=`rgba(${themeOf().haze},${warn})`; ctx.lineWidth=3;
       ctx.beginPath(); ctx.moveTo(fx,fb.y); ctx.lineTo(fx,LAVA_Y); ctx.stroke();
     } else {
       ctx.save();
       ctx.globalCompositeOperation="lighter";
-      glow("#ff6600",22);
+      const TH=themeOf();
+      glow(TH.glow,22);
       const g=ctx.createLinearGradient(fx-14,0,fx+14,0);
-      g.addColorStop(0,"rgba(255,120,0,0)");
-      g.addColorStop(0.5,"rgba(255,160,40,0.85)");
-      g.addColorStop(1,"rgba(255,120,0,0)");
+      g.addColorStop(0,`rgba(${TH.haze},0)`);
+      g.addColorStop(0.5,`rgba(${TH.haze},0.85)`);
+      g.addColorStop(1,`rgba(${TH.haze},0)`);
       ctx.fillStyle=g;
       ctx.fillRect(fx-14,fb.y,28,LAVA_Y-fb.y);
       noGlow();
@@ -5316,6 +5321,11 @@ function enterBossPhase2(){
   boss.phase=2;
   // stage 1's drone comes apart: same fight, visibly wrecked
   if(boss.rageArt) boss.art=boss.rageArt;
+  // ...and a boss that can call for help does it here, once
+  if(boss.summons && !boss.summoned){
+    boss.summoned=true;
+    summonSwarm(boss.summons,2);
+  }
   bossRageTimer=2.2;
   boss.fireCooldown=Math.min(boss.fireCooldown,0.7);
   hitStopTimer=Math.max(hitStopTimer,0.12);
@@ -5329,6 +5339,33 @@ function enterBossPhase2(){
   queueRadio(null,"ACİL DURUM",
     ["ALFA ÇILGINA DÖNDÜ!","Pembe atışları DASH ile savuşturabilirsin!"],
     {color:"#ff2244",urgent:true,hold:3.6});
+}
+
+// A boss with a `summons` species calls a pair of them in on its phase
+// flip. They are ordinary entries in `enemies`, so everything that already
+// kills an enemy kills these too.
+function summonSwarm(species,n){
+  const sp=SPECIES[species];
+  for(let i=0;i<n;i++){
+    const sx=boss.x+rnd(-120,120), sy=boss.y+rnd(-40,40);
+    enemies.push({
+      type:"fly", id:1000+enemies.length,
+      species:species,
+      dripCooldown:rnd(0.8,2.0),
+      x:sx, y:sy, baseY:sy,
+      w:sp?sp.w:ENEMY_FLY_W, h:sp?sp.h:ENEMY_FLY_H,
+      vx:(i%2?1:-1)*80, vy:0,
+      patrolMin:boss.x-320, patrolMax:boss.x+220,
+      hp:2, maxHp:2,
+      wingPhase:rnd(0,Math.PI*2), glowPhase:rnd(0,Math.PI*2), wavePhase:rnd(0,Math.PI*2),
+      hitFlash:0, dying:false, deathTimer:0, dead:false, beamTick:0,
+      arenaEnemy:false
+    });
+    spawnParticles(sx-camX,sy,14,["#34d399","#a7f3d0","#ffffff"],
+      {minSpd:80,maxSpd:240,minLife:0.3,maxLife:0.7,type:"circle",gravity:40});
+  }
+  spawnFloatingText(boss.x-camX,boss.y-60,"SÜRÜ ÇAĞRILDI!","#34d399",16);
+  playPowerUp();
 }
 
 function parryShot(lb){

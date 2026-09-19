@@ -1730,6 +1730,46 @@ function runSuite(){
   check('the climb renders', true);
 }
 
+// ── scenario 48: the Canopy Queen ────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  step(3);
+  check('the climb is guarded', !!g.boss, !!g.boss);
+  check('...by the Canopy Queen', g.boss.name==='KANOPİ KRALİÇESİ', g.boss&&g.boss.name);
+  check('...with her own art', g.boss.art==='boss_forest.png', g.boss&&g.boss.art);
+  check('she is the toughest of the four', g.boss.maxHp===14, g.boss.maxHp);
+  check('the climb rift is sealed until she falls', g.gateOpen===false);
+  check('she can call a swarm', g.boss.summons==='forest_flyer', g.boss.summons);
+  g.drawBoss();
+  check('the queen renders', true);
+}
+
+// ── scenario 49: she calls the swarm once ────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const before=g.enemies.length;
+  g.boss.introState='active';
+  g.boss.hp=Math.floor(g.boss.maxHp/2);
+  for(let i=0;i<6;i++){ g.player.invuln=999; step(1); }
+  check('half health flips her', g.boss.phase===2, g.boss.phase);
+  check('...and brings friends', g.enemies.length>before,
+        before+' -> '+g.enemies.length);
+  check('the swarm is her own species',
+        g.enemies.slice(before).every(e=>e.species==='forest_flyer'));
+  // she does not keep calling them
+  const after=g.enemies.length;
+  for(let i=0;i<120;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  const stillAlive=g.enemies.length;
+  check('the swarm is called once, not every frame', stillAlive===after,
+        after+' -> '+stillAlive);
+}
+
 // ── scenario 9: death screen untouched ────────────────────────
 {
   const {g,step}=run();
