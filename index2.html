@@ -434,9 +434,24 @@ const LAVA_Y = GROUND_Y + 40;
 // the live entity arrays from it, so no other system needs to know which
 // stage is running. Only the final stage carries a boss; stages 1 and 2 end
 // at an open exit portal instead.
+// Every stage names a biome, and the liquid in the pits, the backdrop and
+// the platform surface all read off it. A new biome is a new entry here plus
+// its art, not a new branch in six draw functions.
+const THEMES={
+  volcano:{ liquid:["#ff6a00","#d02800","#4a0400"], surface:"#ffaa33",
+            glow:"#ff7700", haze:"255,125,30",
+            spark:["#ff8800","#ffcc00","#ff4400"] },
+  forest: { liquid:["#10b981","#047857","#022c22"], surface:"#6ee7b7",
+            glow:"#10b981", haze:"16,185,129",
+            spark:["#6ee7b7","#34d399","#a7f3d0"] },
+};
+function levelTheme(){ return (LEVELS[levelIndex]&&LEVELS[levelIndex].theme)||"volcano"; }
+function themeOf(){ return THEMES[levelTheme()]||THEMES.volcano; }
+function isForest(){ return levelTheme()==="forest"; }
+
 const LEVELS = [
   { // ── STAGE 1 — Ember Path (gentle intro: one wide gap, no forced fight)
-    name:"EMBER PATH",
+    name:"EMBER PATH", theme:"volcano",
     width:1300,
     platforms:[
       {x:-200,y:GROUND_Y,w:520,h:76},
@@ -477,7 +492,7 @@ const LEVELS = [
           name:"SİKLON", title:"EMBER PATH DEVRİYESİ"},
   },
   { // ── STAGE 2 — Magma Bridge (three gaps + a forced arena wave)
-    name:"MAGMA BRIDGE",
+    name:"MAGMA BRIDGE", theme:"volcano",
     width:1700,
     platforms:[
       {x:-200,y:GROUND_Y,w:500,h:76},
@@ -524,7 +539,7 @@ const LEVELS = [
     arena:{start:700,end:1150},
   },
   { // ── STAGE 3 — Volcano Core (longest gauntlet, then the Alpha boss)
-    name:"VOLCANO CORE",
+    name:"VOLCANO CORE", theme:"volcano",
     width:1800,
     platforms:[
       {x:-200,y:GROUND_Y,w:480,h:76},
@@ -574,7 +589,91 @@ const LEVELS = [
           sprite:"enemyboss.png",
           name:"ALFA PTERODACTYL", title:"VOLKAN ÇEKİRDEĞİNİN BEKÇİSİ"},
   },
+  { // ── STAGE 4 — Spore Walk (the Toxic Canopy's first stage)
+    // No boss and no new enemy types yet: this stage exists to carry the
+    // forest biome's backdrop, platform surface and acid pits. Its exit
+    // portal is open from the start (boss:null), so it plays as traversal.
+    name:"SPORE WALK", theme:"forest",
+    width:1400,
+    platforms:[
+      {x:-200,y:GROUND_Y,w:540,h:76},
+      {x:340, y:GROUND_Y,w:120,h:76,lavaPit:true},
+      {x:460, y:GROUND_Y,w:300,h:76},
+      {x:760, y:GROUND_Y,w:110,h:76,lavaPit:true},
+      {x:870, y:GROUND_Y,w:530,h:76},
+      {x:170, y:330,w:120,h:18},
+      {x:470, y:300,w:120,h:18},
+      {x:660, y:250,w:130,h:18},
+      {x:930, y:290,w:120,h:18},
+      {x:1180,y:340,w:150,h:18,goal:true},
+    ],
+    lavaPits:[{x:340,w:120},{x:760,w:110}],
+    crystals:[{x:1060,y:370},{x:1100,y:380}],
+    coins:()=>[
+      ...coinArcOver(170,330,120,4),
+      ...coinArcOver(470,300,120,4),
+      ...coinArcOver(660,250,130,5),
+      ...coinArcOver(930,290,120,4),
+      ...coinArc(325,330,470,330,4,55),
+      ...coinArc(750,330,880,330,4,50),
+    ],
+    flyers:[
+      {x:540,y:170,patrol:[440,760], spd:75},
+      {x:980,y:150,patrol:[880,1280],spd:85},
+    ],
+    grounders:[{platX:460,platW:300,spd:58},{platX:870,platW:530,spd:64}],
+    powerBoxes:[{x:470,y:250},{x:930,y:240}],
+    weapons:[{x:260,y:300,kind:"spread"},{x:1000,y:210,kind:"flame"}],
+    cages:[{x:230,y:308},{x:720,y:228},{x:990,y:268}],
+    escapeLine:"ZEHİRLİ ÇATIDAN ÇIKILDI",
+    checkpoint:700, parTime:70,
+    arena:null,
+    boss:null,
+  },
 ];
+
+// ─── WORLDS (the mission select map) ──────────────────────────
+// A world owns a run of stages. Clearing the last stage of a world stamps it
+// on the map and unlocks the next one. mx/my are fractions of the canvas, so
+// the map layout is resolution independent.
+const WORLDS=[
+  {id:"volcano", name:"VOLCANO CORE", sub:"LAV ÇEKİRDEĞİ",   levels:[0,1,2],
+   mx:0.17, my:0.66, color:"#ff6a2a"},
+  {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3],
+   mx:0.40, my:0.33, color:"#10b981"},
+  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[],
+   mx:0.63, my:0.62, color:"#7dd3fc"},
+  {id:"cyber",   name:"CYBER CRATER", sub:"SİBER KRATER",    levels:[],
+   mx:0.85, my:0.30, color:"#c084fc"},
+];
+let worldIndex=0;
+let mapSel=0;
+let mapStampTimer=0;      // the CLEARED stamp slamming down on arrival
+let mapStampWorld=-1;
+let mapKeyWasDown=false;
+
+// progress survives a refresh
+let worldProgress={};
+try{ worldProgress=JSON.parse(localStorage.getItem("neonDinoWorlds")||"{}")||{}; }
+catch(e){ worldProgress={}; }
+function worldState(i){
+  const w=WORLDS[i];
+  const p=worldProgress[w.id]||{};
+  // the first world is always open; the rest have to be earned. A world with
+  // no stages yet can never be entered, however it is flagged.
+  const unlocked = i===0 ? true : !!p.unlocked;
+  return {unlocked, cleared:!!p.cleared, playable: unlocked && w.levels.length>0};
+}
+function saveWorlds(){
+  try{ localStorage.setItem("neonDinoWorlds",JSON.stringify(worldProgress)); }catch(e){}
+}
+function markWorldCleared(i){
+  const w=WORLDS[i];
+  worldProgress[w.id]=Object.assign({},worldProgress[w.id],{unlocked:true,cleared:true});
+  const next=WORLDS[i+1];
+  if(next) worldProgress[next.id]=Object.assign({},worldProgress[next.id],{unlocked:true});
+  saveWorlds();
+}
 
 // live level state — rebuilt by loadLevel()
 let levelIndex = 0;                 // 0-based index into LEVELS
@@ -1529,6 +1628,48 @@ function initBoss(){
   stageClearDelay=0;
 }
 
+// ─── ENTERING A WORLD ─────────────────────────────────────────
+// A world is a run of stages. Starting one is a fresh mission: score, credits
+// and the arsenal all reset, which is what makes a per-world grade and a
+// per-world rescue tally mean anything.
+function worldOfLevel(i){
+  for(let w=0;w<WORLDS.length;w++) if(WORLDS[w].levels.indexOf(i)>=0) return w;
+  return 0;
+}
+function stageInWorld(){
+  const lv=WORLDS[worldIndex]?WORLDS[worldIndex].levels:[];
+  const p=lv.indexOf(levelIndex);
+  return {pos:p<0?0:p, count:lv.length||1};
+}
+function startWorld(i){
+  const w=WORLDS[i];
+  if(!w||!w.levels.length) return false;
+  worldIndex=i;
+  score=0; chain=0; chainTimer=0; feverMode=false; feverFlash=0;
+  newRecord=false;
+  player.hp=player.maxHp; player.invuln=0;
+  player.activePower=null; player.shieldCharge=false;
+  player.dashTimer=0; player.dashCooldown=0; player.dashKeyWasDown=false;
+  continuesLeft=MAX_CONTINUES; continueTimer=0;
+  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
+  rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
+  screenShake=0; bossShakeTimer=0; hitStopTimer=0;
+  stopLaserSound(); stopSiren(); player.wasFiring=false;
+  loadLevel(w.levels[0]);
+  STATE="playing"; stateTimer=0;
+  return true;
+}
+// Called when the last stage of a world is signed off. Stamps the map,
+// unlocks the next world, and drops the player back onto it.
+function finishWorld(){
+  markWorldCleared(worldIndex);
+  mapStampWorld=worldIndex; mapStampTimer=2.4; mapSel=worldIndex;
+  const anyLeft=WORLDS.some((w,i)=>w.levels.length&&!worldState(i).cleared);
+  if(!anyLeft){ STATE="win"; stateTimer=0; return; }
+  STATE="map"; stateTimer=0;
+  playPowerUp();
+}
+
 // ─── LOAD A STAGE ─────────────────────────────────────────────
 // Rebuilds every piece of live level state from the LEVELS table. Called once
 // at boot, on restart, and on each stage transition — nothing else needs to
@@ -1602,13 +1743,49 @@ let screenShake = 0;
 let hitStopTimer = 0; // brief real-time freeze applied on impactful hits
 
 // ─── GAME STATE ───────────────────────────────────────────────
-let STATE = "playing"; // playing | warp | report | continue | dead | win
+let STATE = "map"; // map | playing | warp | report | continue | dead | win
 let stateTimer = 0;
 let goalReached = false;
 let lavaSurface = [];
 function genLavaSurface(){ lavaSurface=[]; for(let i=0;i<=60;i++) lavaSurface.push({t:rnd(0,Math.PI*2)}); }
 genLavaSurface();
 let t = 0;
+
+// ─── FOREST BACKDROP ─────────────────────────────────────────
+function drawForestBG(){
+  ctx.fillStyle="#04140c"; ctx.fillRect(0,0,W,H);
+  if(forestBgLoaded){
+    const iw=forestBgSprite.naturalWidth, ih=forestBgSprite.naturalHeight;
+    const dw=Math.max(1,iw*(H/ih));           // cover the canvas height
+    // slow scroll — the backdrop drifts at a fifth of the level's speed
+    const off=((-camX*0.2)%dw+dw)%dw;
+    for(let i=-1;i*dw-off<W;i++){
+      const dx=i*dw-off;
+      ctx.save();
+      // mirror every other copy so the corridor meets itself cleanly
+      if(((i%2)+2)%2===1){ ctx.translate(dx+dw,0); ctx.scale(-1,1); }
+      else ctx.translate(dx,0);
+      ctx.drawImage(forestBgSprite,0,0,iw,ih,0,0,dw,H);
+      ctx.restore();
+    }
+  }
+  // depth: darken the whole plate, then a green haze that thickens downward
+  ctx.fillStyle="rgba(2,12,8,0.45)";
+  ctx.fillRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"rgba(4,24,14,0.55)");
+  g.addColorStop(0.45,"rgba(6,40,24,0.18)");
+  g.addColorStop(1,"rgba(2,20,12,0.65)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // spore motes drifting through the canopy light
+  if(Math.random()<0.25) particles.push({
+    x:rnd(0,W), y:rnd(40,H-120),
+    vx:rnd(-12,12), vy:-rnd(4,16),
+    life:1, maxLife:rnd(1.6,3.2),
+    color:Math.random()<0.5?"rgba(110,231,183,0.55)":"rgba(52,211,153,0.4)",
+    size:rnd(1,3), type:"circle", gravity:-3
+  });
+}
 
 // ─── PARALLAX BG ─────────────────────────────────────────────
 // Stars
@@ -1623,6 +1800,7 @@ function noGlow(){ ctx.shadowBlur=0; }
 
 // ─── DRAW BACKGROUND ─────────────────────────────────────────
 function drawBG(){
+  if(isForest()){ drawForestBG(); return; }
   // deep cave gradient
   const bg = ctx.createLinearGradient(0,0,0,H);
   bg.addColorStop(0,"#0a0618");
@@ -1709,6 +1887,59 @@ function drawBG(){
   ctx.lineTo(W,0); ctx.closePath(); ctx.fill();
 }
 
+// ─── FOREST BIOME ART ─────────────────────────────────────────
+// forest_bg.png is a portrait corridor, so it is scaled to the canvas height
+// and mirror-tiled sideways — the corridor is roughly symmetric, so flipped
+// copies meet without a seam. It scrolls slower than the level for parallax.
+const forestBgSprite=new Image();
+let forestBgLoaded=false;
+forestBgSprite.onload=()=>{ forestBgLoaded=true; };
+forestBgSprite.src="forest_bg.png";
+
+// forest_ground.png is ONE mossy block, not a tileable strip. Three bands of
+// it are used: the grass tufts that poke ABOVE the walk line, the body, and
+// the vines that hang below into open air. Row 426 is where the art becomes
+// a solid slab, and that row is drawn exactly at p.y — the same line the
+// collision resolver stands the player on.
+const forestGroundSprite=new Image();
+let forestGroundLoaded=false;
+forestGroundSprite.onload=()=>{ forestGroundLoaded=true; };
+forestGroundSprite.src="forest_ground.png";
+const FG_X=150, FG_W=540;        // the block's clean middle, no ragged edges
+const FG_TUFT_Y=348, FG_TOP=426; // tufts above the surface line / the surface
+const FG_BODY_END=1065, FG_VINE_Y=1074, FG_VINE_END=1170;
+
+// Bands are scaled independently: horizontally by a fixed tile width,
+// vertically by the platform. Moss is noise and takes non-uniform scaling
+// without complaint, which is what lets one block art serve every ledge.
+function drawForestCap(px,worldX,y,w,capH,isFloat,bodyBottom){
+  if(!forestGroundLoaded) return;
+  const TW=96;
+  const tuftH=13, vineH=30;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(px,y-tuftH,w,(bodyBottom-y)+vineH+tuftH); ctx.clip();
+  const i0=Math.floor(worldX/TW), i1=Math.ceil((worldX+w)/TW);
+  for(let i=i0;i<i1;i++){
+    const tx=px+(i*TW-worldX);
+    ctx.save();
+    if(i%2!==0){ ctx.translate(tx+TW,0); ctx.scale(-1,1); }
+    else ctx.translate(tx,0);
+    // grass tufts, rising above the walk line
+    ctx.drawImage(forestGroundSprite,FG_X,FG_TUFT_Y,FG_W,FG_TOP-FG_TUFT_Y,
+                  0,y-tuftH,TW,tuftH);
+    // mossy body
+    ctx.drawImage(forestGroundSprite,FG_X,FG_TOP,FG_W,FG_BODY_END-FG_TOP,
+                  0,y,TW,bodyBottom-y);
+    // vines, only where there is open air under the ledge
+    if(isFloat){
+      ctx.drawImage(forestGroundSprite,FG_X,FG_VINE_Y,FG_W,FG_VINE_END-FG_VINE_Y,
+                    0,bodyBottom,TW,vineH);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 // ─── GROUND SURFACE TILE (ground.png) ─────────────────────────
 // The walking surface of every solid platform, and of the cave floor, is one
 // horizontal strip of ground.png mirror-tiled along the top.
@@ -1761,6 +1992,7 @@ function drawGroundCap(px,worldX,y,w,capH){
 const HUD_CLEAR_X = W-286;   // nothing decorative is drawn right of this, so
                              // the neon CHAIN/SCORE panel sits on clean sky
 function drawStalactites(){
+  if(isForest()) return;   // no cave ceiling out under the canopy
   for(const s of stalactites){
     const sx = s.x - camX*0.96;
     if(sx<-40||sx>W+40) continue;
@@ -1879,13 +2111,23 @@ function drawPlatforms(){
       const isFloat = p.y < GROUND_Y;
       const capH = clamp(p.h*0.55,22,44);
       const g=ctx.createLinearGradient(0,p.y,0,p.y+p.h);
-      g.addColorStop(0, isFloat?"#241f2c":"#1c1822");
-      g.addColorStop(0.45,isFloat?"#16121c":"#110e16");
-      g.addColorStop(1, "#080609");
+      if(isForest()){
+        g.addColorStop(0, isFloat?"#1e3a2a":"#16301f");
+        g.addColorStop(0.45,"#0f2318");
+        g.addColorStop(1, "#06120c");
+      } else {
+        g.addColorStop(0, isFloat?"#241f2c":"#1c1822");
+        g.addColorStop(0.45,isFloat?"#16121c":"#110e16");
+        g.addColorStop(1, "#080609");
+      }
       ctx.fillStyle=g;
       ctx.fillRect(px,p.y,p.w,p.h);
 
-      if(groundLoaded){
+      if(isForest()&&forestGroundLoaded){
+        // the mossy block's solid row lands on p.y; tufts rise above it and
+        // vines hang below a floating ledge
+        drawForestCap(px,p.x,p.y,p.w,capH,isFloat,isFloat?p.y+capH:p.y+p.h);
+      } else if(groundLoaded){
         // the texture's own top edge IS the collision line at p.y
         drawGroundCap(px,p.x,p.y,p.w,capH);
       } else {
@@ -1993,11 +2235,12 @@ function drawLava(){
   // strong upward-cast light bathing the walls/ceiling above the lava floor —
   // additive blending so it actually brightens the rock behind it (bloom)
   // rather than just laying flat translucent orange over it
+  const TH=themeOf();
   ctx.globalCompositeOperation="lighter";
-  ctx.shadowColor="#ff4400"; ctx.shadowBlur=20;
+  ctx.shadowColor=TH.glow; ctx.shadowBlur=20;
   const upG=ctx.createLinearGradient(0,LAVA_Y-140,0,LAVA_Y);
-  upG.addColorStop(0,"rgba(255,68,0,0)");
-  upG.addColorStop(1,`rgba(255,90,0,${0.22+0.06*Math.sin(t*2)})`);
+  upG.addColorStop(0,`rgba(${TH.haze},0)`);
+  upG.addColorStop(1,`rgba(${TH.haze},${0.22+0.06*Math.sin(t*2)})`);
   ctx.fillStyle=upG;
   ctx.fillRect(0,LAVA_Y-140,W,140);
   ctx.shadowBlur=0;
@@ -2005,15 +2248,15 @@ function drawLava(){
 
   // lava floor fill
   const lavaGrad = ctx.createLinearGradient(0,LAVA_Y,0,H);
-  lavaGrad.addColorStop(0,"#ff4400");
-  lavaGrad.addColorStop(0.3,"#cc2200");
-  lavaGrad.addColorStop(1,"#660000");
+  lavaGrad.addColorStop(0,TH.liquid[0]);
+  lavaGrad.addColorStop(0.3,TH.liquid[1]);
+  lavaGrad.addColorStop(1,TH.liquid[2]);
   ctx.fillStyle=lavaGrad;
   ctx.fillRect(0,LAVA_Y,W,H-LAVA_Y);
 
   // animated lava surface ripple
-  glow("#ff6600",20);
-  ctx.strokeStyle="#ff8800"; ctx.lineWidth=2;
+  glow(TH.glow,20);
+  ctx.strokeStyle=TH.surface; ctx.lineWidth=2;
   ctx.beginPath();
   for(let i=0;i<=W;i+=12){
     const worldX = (camX+i)/20;
@@ -2024,10 +2267,11 @@ function drawLava(){
 
   // rising ember/spark particles continuously drifting up off the whole lava
   // surface — denser during fever for extra atmosphere
+  // volcano throws embers up; the swamp burps bubbles
   if(Math.random()<(feverMode?0.9:0.6)) spawnParticles(
-    rnd(0,W), LAVA_Y+rnd(-2,4), 1,
-    ["#ffcc33","#ff8800","#ff4400"],
-    {minSpd:8,maxSpd:30,upBias:70,minLife:0.6,maxLife:1.6,type:"circle",gravity:20,minSz:1,maxSz:3}
+    rnd(0,W), LAVA_Y+rnd(-2,4), 1, TH.spark,
+    {minSpd:8,maxSpd:30,upBias:isForest()?40:70,minLife:0.6,maxLife:1.6,
+     type:"circle",gravity:isForest()?-10:20,minSz:1,maxSz:isForest()?4:3}
   );
 
   // Lava pits (the gaps between platforms). The gap now simply shows the
@@ -2041,14 +2285,14 @@ function drawLava(){
     ctx.save();
     // molten fill falling away into the gap
     const pg=ctx.createLinearGradient(0,GROUND_Y,0,H);
-    pg.addColorStop(0,"#ff6a00");
-    pg.addColorStop(0.35,"#d02800");
-    pg.addColorStop(1,"#4a0400");
+    pg.addColorStop(0,TH.liquid[0]);
+    pg.addColorStop(0.35,TH.liquid[1]);
+    pg.addColorStop(1,TH.liquid[2]);
     ctx.fillStyle=pg;
     ctx.fillRect(lpx,GROUND_Y+2,lp.w,H-GROUND_Y);
     // rippling surface right at the lip, same wave maths as the main floor
-    glow("#ff7700",14);
-    ctx.strokeStyle="#ffaa33"; ctx.lineWidth=2;
+    glow(TH.glow,14);
+    ctx.strokeStyle=TH.surface; ctx.lineWidth=2;
     ctx.beginPath();
     for(let i=0;i<=lp.w;i+=8){
       const wx=(lp.x+i)/18;
@@ -2061,17 +2305,20 @@ function drawLava(){
     ctx.globalCompositeOperation="lighter";
     const cxp=lpx+lp.w/2, r=lp.w*0.95;
     const haze=ctx.createRadialGradient(cxp,GROUND_Y+6,4,cxp,GROUND_Y+6,r);
-    haze.addColorStop(0,`rgba(255,125,30,${0.30+0.06*Math.sin(t*2)})`);
-    haze.addColorStop(0.5,"rgba(255,80,0,0.10)");
-    haze.addColorStop(1,"rgba(255,60,0,0)");
+    haze.addColorStop(0,`rgba(${TH.haze},${0.30+0.06*Math.sin(t*2)})`);
+    haze.addColorStop(0.5,`rgba(${TH.haze},0.10)`);
+    haze.addColorStop(1,`rgba(${TH.haze},0)`);
     ctx.fillStyle=haze;
     ctx.fillRect(cxp-r,GROUND_Y+6-r,r*2,r*2);
     ctx.restore();
     // sparks lifting out of the gap
+    // acid bubbles rise and hang; embers spit and fall
     if(Math.random()<0.3) spawnParticles(
-      lpx+rnd(0,lp.w), GROUND_Y+2, 1,
-      ["#ff8800","#ffcc00","#ff4400"],
-      {minSpd:20,maxSpd:80,upBias:60,minLife:0.2,maxLife:0.6,type:"square",gravity:-50}
+      lpx+rnd(0,lp.w), GROUND_Y+2, 1, TH.spark,
+      {minSpd:20,maxSpd:isForest()?50:80,upBias:isForest()?40:60,
+       minLife:0.2,maxLife:isForest()?1.0:0.6,
+       type:isForest()?"circle":"square",gravity:isForest()?-25:-50,
+       minSz:1,maxSz:isForest()?4:3}
     );
   }
   // (the two procedural "lava falls" that used to hang at world x=0 and
@@ -2645,12 +2892,13 @@ function drawBabyDinos(){
 
 // ─── DRAW MAGMA BURSTS (dynamic lava hazard) ───────────────────
 function drawMagmaBursts(){
+  const TH=themeOf();
   for(const m of magmaBursts){
     const mx=m.x-camX, my=m.y;
-    glow("#ff5500",14);
-    ctx.fillStyle="#ff7700";
+    glow(TH.glow,14);
+    ctx.fillStyle=TH.liquid[0];
     ctx.beginPath(); ctx.arc(mx,my,6,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle="#ffdd44";
+    ctx.fillStyle=TH.surface;
     ctx.beginPath(); ctx.arc(mx-1,my-1,2.5,0,Math.PI*2); ctx.fill();
     noGlow();
   }
@@ -2931,7 +3179,10 @@ function drawHUD(){
   lineY+=18;
   ctx.font="bold 11px 'Courier New',monospace";
   ctx.fillStyle="#aaaacc";
-  ctx.fillText(`STAGE ${levelIndex+1}/${LEVELS.length} — ${LEVELS[levelIndex].name}`,bx+pad,lineY);
+  {
+    const si=stageInWorld();
+    ctx.fillText(`STAGE ${si.pos+1}/${si.count} — ${LEVELS[levelIndex].name}`,bx+pad,lineY);
+  }
   lineY+=16;
   ctx.font="bold 11px 'Courier New',monospace";
   // red-flashes while a hatchling is loose — that is a countdown, not a stat
@@ -3302,6 +3553,151 @@ function drawMissionReport(){
   ctx.textAlign="left";
 }
 
+// ─── MISSION SELECT (the world map) ──────────────────────────
+// A 16-bit briefing screen: four nodes on a route, a CLEARED stamp on the
+// ones behind you, padlocks on the ones ahead. Lock state lives in
+// localStorage, so a refresh does not undo an evening's progress.
+function drawWorldMap(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#05030f"); g.addColorStop(0.55,"#0b0722"); g.addColorStop(1,"#12061a");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // the same starfield as the cave, drifting on its own
+  for(const s of stars){
+    const sx=((s.x+t*4)%W+W)%W;
+    ctx.globalAlpha=0.25+0.35*Math.sin(t*1.5+s.twinkle);
+    ctx.fillStyle="#b8d4ff";
+    ctx.beginPath(); ctx.arc(sx,s.y*0.9+30,s.r,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // header
+  ctx.textAlign="center";
+  const pulse=0.6+0.4*Math.sin(t*4);
+  glow("#e879f9",14+8*pulse);
+  ctx.font="bold 34px 'Courier New',monospace";
+  ctx.fillStyle="#e879f9";
+  ctx.fillText("MISSION SELECT",W/2,58);
+  noGlow();
+  ctx.font="bold 11px 'Courier New',monospace";
+  ctx.fillStyle="#8899bb";
+  ctx.fillText("NEON DINO-AGE  //  RESCUE PROTOCOL",W/2,78);
+
+  const px2=i=>WORLDS[i].mx*W, py2=i=>WORLDS[i].my*H;
+
+  // the route between nodes, dashed and animated
+  ctx.save();
+  ctx.setLineDash&&ctx.setLineDash([7,9]);
+  ctx.lineDashOffset=-t*18;
+  for(let i=0;i<WORLDS.length-1;i++){
+    const open=worldState(i).cleared;
+    ctx.strokeStyle=open?"rgba(142,255,201,0.75)":"rgba(120,130,170,0.30)";
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(px2(i),py2(i)); ctx.lineTo(px2(i+1),py2(i+1)); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.setLineDash&&ctx.setLineDash([]);
+
+  // the nodes
+  for(let i=0;i<WORLDS.length;i++){
+    const w=WORLDS[i], st=worldState(i);
+    const x=px2(i), y=py2(i);
+    const sel=i===mapSel;
+    const col=st.playable?w.color:"#5a6076";
+
+    if(sel&&mapStampTimer<=0){
+      glow(w.color,18+10*pulse);
+      ctx.strokeStyle=w.color; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(x,y,34+3*pulse,0,Math.PI*2); ctx.stroke();
+      noGlow();
+    }
+    // the node disc
+    glow(col,st.playable?16:4);
+    ctx.fillStyle="rgba(6,4,14,0.9)";
+    ctx.beginPath(); ctx.arc(x,y,24,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle=col; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(x,y,24,0,Math.PI*2); ctx.stroke();
+    noGlow();
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(x,y,11,0,Math.PI*2); ctx.fill();
+
+    if(!st.unlocked||!w.levels.length){
+      // padlock: shackle + body, drawn small so it reads at a glance
+      ctx.strokeStyle="#cbd5e1"; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(x,y-4,6,Math.PI,0); ctx.stroke();
+      ctx.fillStyle="#cbd5e1";
+      ctx.fillRect(x-8,y-3,16,12);
+    }
+
+    ctx.textAlign="center";
+    ctx.font="bold 13px 'Courier New',monospace";
+    ctx.fillStyle=st.playable?"#ffffff":"#8a90a6";
+    ctx.fillText(w.name,x,y+46);
+    ctx.font="bold 10px 'Courier New',monospace";
+    ctx.fillStyle=st.playable?col:"#6a7188";
+    ctx.fillText(w.sub,x,y+60);
+    if(!w.levels.length){
+      ctx.fillStyle="#6a7188";
+      ctx.fillText("YAKINDA",x,y+74);
+    }
+
+    // CLEARED stamp — slams down on arrival, then just sits there
+    if(st.cleared){
+      let sc=1, rot=-0.22;
+      if(mapStampTimer>0&&mapStampWorld===i){
+        const el=2.4-mapStampTimer;
+        sc = el<0.25 ? lerp(3.2,1,el/0.25) : 1;
+        if(el<0.35) rot=-0.22+Math.sin(el*60)*0.05;
+      }
+      ctx.save();
+      ctx.translate(x,y-4); ctx.rotate(rot); ctx.scale(sc,sc);
+      ctx.globalAlpha=0.92;
+      glow("#ff2244",12);
+      ctx.strokeStyle="#ff2a45"; ctx.lineWidth=3;
+      ctx.strokeRect(-52,-15,104,30);
+      ctx.font="bold 18px 'Courier New',monospace";
+      ctx.fillStyle="#ff3a53";
+      ctx.fillText("CLEARED",0,7);
+      noGlow();
+      ctx.restore();
+      ctx.globalAlpha=1;
+    }
+  }
+
+  // briefing panel for the highlighted node
+  const w=WORLDS[mapSel], st=worldState(mapSel);
+  const bw=520,bh=62,bx=W/2-bw/2,by=H-84;
+  ctx.fillStyle="rgba(4,4,12,0.88)"; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle=st.playable?w.color:"#5a6076"; ctx.lineWidth=2;
+  ctx.strokeRect(bx,by,bw,bh);
+  ctx.textAlign="left";
+  ctx.font="bold 15px 'Courier New',monospace";
+  ctx.fillStyle=st.playable?w.color:"#8a90a6";
+  ctx.fillText(w.name,bx+14,by+22);
+  ctx.font="bold 11px 'Courier New',monospace";
+  ctx.fillStyle="#aab4cc";
+  ctx.fillText(w.levels.length?(w.levels.length+" BÖLÜM"):"HENÜZ AÇILMADI",bx+14,by+40);
+  const best=w.levels.map(l=>bestGrades[l]).filter(Boolean);
+  if(best.length){
+    ctx.fillStyle="#ffdd66";
+    ctx.fillText("EN İYİ NOT: "+best.join(" "),bx+14,by+55);
+  }
+  ctx.textAlign="right";
+  ctx.font="bold 11px 'Courier New',monospace";
+  ctx.fillStyle="#88ccaa";
+  if(mapStampTimer<=0&&Math.sin(t*6)>-0.4){
+    ctx.fillText(st.playable?"[ENTER] GÖREVE BAŞLA":"KİLİTLİ",bx+bw-14,by+22);
+  }
+  ctx.fillStyle="#7788aa";
+  ctx.fillText("◀ ▶  HEDEF SEÇ",bx+bw-14,by+42);
+  ctx.textAlign="left";
+
+  ctx.textAlign="center";
+  ctx.font="bold 10px 'Courier New',monospace";
+  ctx.fillStyle="#66708c";
+  ctx.fillText("HI-SCORE: "+hiScore.toLocaleString(),W/2,H-12);
+  ctx.textAlign="left";
+}
+
 // ─── CONTINUE? ───────────────────────────────────────────────
 function drawContinue(){
   ctx.fillStyle="rgba(0,0,0,0.80)"; ctx.fillRect(0,0,W,H);
@@ -3379,7 +3775,7 @@ function drawWin(){
   noGlow();
 
   // the run-long rescue total — the whole point of the mission
-  const grandTotal=LEVELS.reduce((s,l)=>s+l.cages.length,0);
+  const grandTotal=WORLDS[worldIndex].levels.reduce((s,i)=>s+LEVELS[i].cages.length,0);
   glow("#ffcc55",12);
   ctx.font="bold 20px 'Courier New',monospace";
   ctx.fillStyle="#ffcc66";
@@ -3411,7 +3807,7 @@ function drawWin(){
                                        :"Great job, Bago!",W/2,H/2+90);
   ctx.font="14px 'Courier New',monospace";
   ctx.fillStyle="#88ccaa";
-  ctx.fillText("Press R to play again",W/2,H/2+118);
+  ctx.fillText("Press R — MISSION SELECT",W/2,H/2+118);
   ctx.textAlign="left";
 }
 
@@ -3420,9 +3816,44 @@ function update(dt){
   t+=dt;
   if(STATE==="dead"||STATE==="win"){
     stateTimer+=dt;
-    if(K["KeyR"]&&stateTimer>0.5) restartGame();
+    if(K["KeyR"]&&stateTimer>0.5){
+      // a cleared run goes back to the map; a death restarts the world
+      if(STATE==="win"){ STATE="map"; stateTimer=0; mapSel=worldIndex; }
+      else restartGame();
+    }
     return;
   }
+  // MISSION SELECT — nothing simulates here, it is a menu
+  if(STATE==="map"){
+    stateTimer+=dt;
+    updateParticles(dt);
+    if(mapStampTimer>0){
+      mapStampTimer-=dt;
+      if(mapStampTimer<=0){
+        // once the stamp lands, move the cursor onto whatever just unlocked
+        for(let i=0;i<WORLDS.length;i++){
+          const st=worldState(i);
+          if(st.playable&&!st.cleared){ mapSel=i; break; }
+        }
+      }
+    }
+    const left=K["ArrowLeft"]||K["KeyA"], right=K["ArrowRight"]||K["KeyD"];
+    const anyDir=left||right;
+    if(anyDir&&!mapKeyWasDown&&mapStampTimer<=0){
+      const dir=right?1:-1;
+      // step to the next selectable node, wrapping
+      for(let n=1;n<=WORLDS.length;n++){
+        const cand=((mapSel+dir*n)%WORLDS.length+WORLDS.length)%WORLDS.length;
+        if(worldState(cand).playable){ mapSel=cand; playPew(); break; }
+      }
+    }
+    mapKeyWasDown=anyDir;
+    if(K["Enter"]&&stateTimer>0.25&&mapStampTimer<=0){
+      if(startWorld(mapSel)) return;
+    }
+    return;
+  }
+
   // credit clock: ENTER spends one, R gives up, zero means it is really over
   if(STATE==="continue"){
     stateTimer+=dt;
@@ -3478,12 +3909,14 @@ function update(dt){
       if(reportTypeTick<=0){ playRadioType(); reportTypeTick=0.055; }
     }
     if(reportTimer>REPORT_MIN && (K["Enter"]||reportTimer>REPORT_AUTO)){
-      if(levelIndex<LEVELS.length-1){
-        loadLevel(levelIndex+1);
+      const lv=WORLDS[worldIndex].levels;
+      const pos=lv.indexOf(levelIndex);
+      if(pos>=0 && pos<lv.length-1){
+        loadLevel(lv[pos+1]);
         STATE="playing"; stateTimer=0;
       } else {
-        // final stage — newRecord was already resolved by endLevel()
-        STATE="win"; stateTimer=0;
+        // world cleared — newRecord was already resolved by endLevel()
+        finishWorld();
       }
     }
     return;
@@ -4632,9 +5065,10 @@ function endLevel(){
   lastGrade=grade.letter; lastGradeScore=grade.pts;
   lastGradeIsBest=recordGrade(grade.letter);
 
-  // the final stage's score is locked in here, before the debrief plays, so
+  // the world's final score is locked in here, before the debrief plays, so
   // the victory screen never re-runs the high-score check
-  if(levelIndex>=LEVELS.length-1) newRecord=saveHiScoreIfNeeded();
+  const lvs=WORLDS[worldIndex].levels;
+  if(lvs.indexOf(levelIndex)===lvs.length-1) newRecord=saveHiScoreIfNeeded();
 }
 
 function restartGame(){
@@ -4649,7 +5083,8 @@ function restartGame(){
   continuesLeft=MAX_CONTINUES; continueTimer=0;
   weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
   screenShake=0; bossShakeTimer=0;
-  loadLevel(0);  // back to stage 1 — also resets position, camera and all entities
+  // back to the top of the CURRENT world, not to the first stage of the game
+  if(!startWorld(worldIndex)) startWorld(0);
 }
 
 // ─── MAIN LOOP ───────────────────────────────────────────────
@@ -4713,6 +5148,7 @@ function loop(now){
   drawBossRage();
   if(STATE==="playing") drawRadio();
 
+  if(STATE==="map") drawWorldMap();
   if(STATE==="continue") drawContinue();
   if(STATE==="report") drawMissionReport();
   if(STATE==="dead") drawGameOver();
@@ -4721,10 +5157,17 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
-// build stage 1 and start. loadLevel() has to run down here, after every
+// Build a valid stage so every draw path has something to read, then open on
+// the mission select screen. loadLevel() has to run down here, after every
 // `let` it touches has been initialised (coins/enemies/drops/etc.), otherwise
 // it would hit the temporal dead zone.
 loadLevel(0);
+worldIndex=0;
+for(let i=0;i<WORLDS.length;i++){
+  const st=worldState(i);
+  if(st.playable&&!st.cleared){ mapSel=i; break; }
+}
+STATE="map";
 requestAnimationFrame(t=>{lastTime=t;requestAnimationFrame(loop);});
 </script>
 </body>

@@ -66,7 +66,11 @@ function makeCtx(){
   });
 }
 
-function run(){
+// The game now opens on MISSION SELECT, so a scenario that wants to be in a
+// stage has to enter a world first. Every scenario written before the map
+// existed assumes stage 1 of the volcano, so that is the default; pass
+// {map:true} to stay on the menu.
+function run(opts){
   const rafQueue=[];
   const listeners={};
   const sandbox={
@@ -150,6 +154,17 @@ function run(){
   get cages(){return cages;}, get levelIndex(){return levelIndex;},
   get enemies(){return enemies;}, get groundEnemies(){return groundEnemies;},
   get LEVELS(){return LEVELS;}, get boss(){return boss;},
+  get WORLDS(){return WORLDS;}, get worldIndex(){return worldIndex;},
+  get mapSel(){return mapSel;}, set mapSel(v){mapSel=v;},
+  get mapStampTimer(){return mapStampTimer;},
+  get worldProgress(){return worldProgress;},
+  startWorld:(i)=>startWorld(i),
+  worldState:(i)=>worldState(i),
+  finishWorld:()=>finishWorld(),
+  drawWorldMap:()=>drawWorldMap(),
+  drawBG:()=>drawBG(),
+  isForest:()=>isForest(),
+  themeOf:()=>themeOf(),
   get gateOpen(){return gateOpen;}, set gateOpen(v){gateOpen=v;},
   get score(){return score;}, get camX(){return camX;}, set camX(v){camX=v;},
   get reportTimer(){return reportTimer;}, set reportTimer(v){reportTimer=v;},
@@ -218,7 +233,11 @@ function run(){
       for(const fn of fns) fn({code});
     }
   }
-  return {g,step,keys,sandbox,loadedImages,rafQueue,drawStats};
+  if(!opts||!opts.map) g.startWorld(0);
+  // the stubbed localStorage, so a scenario can prove something was actually
+  // written rather than just mutated in memory
+  return {g,step,keys,sandbox,loadedImages,rafQueue,drawStats,
+          store:sandbox.localStorage};
 }
 
 function runSuite(){
@@ -226,7 +245,7 @@ function runSuite(){
 // ── scenario 1: boot + free run ───────────────────────────────
 {
   const {g,step}=run();
-  check('boots into playing state', g.STATE==='playing', g.STATE);
+  check('entering a world starts it playing', g.STATE==='playing', g.STATE);
   check('stage-open transmission is on the air', !!g.radio && g.radioFired.start===true);
   check('opening transmission carries the eruption warning',
         !!g.radio && g.radio.lines[0].indexOf('Volkan patlıyor')>=0, g.radio&&g.radio.lines[0]);
@@ -369,11 +388,17 @@ function runSuite(){
   step(30); g.drawMissionReport();
   keys({Enter:true});
   step(200);
-  check('debrief hands over to the victory screen', g.STATE==='win', g.STATE);
-  g.drawWin();
-  check('victory screen renders', true);
+  keys({Enter:false});
+  check('clearing the last stage of a world returns to the map',
+        g.STATE==='map', g.STATE);
+  check('the world is stamped cleared', g.worldState(0).cleared===true);
+  check('the next world unlocks', g.worldState(1).unlocked===true);
+  check('the CLEARED stamp is animating', g.mapStampTimer>0, g.mapStampTimer);
+  g.drawWorldMap();
+  check('the map renders with a fresh stamp', true);
   g.restartGame();
-  check('restart returns to stage 1', g.STATE==='playing' && g.levelIndex===0);
+  check('restart returns to the top of the world',
+        g.STATE==='playing' && g.levelIndex===0, g.STATE+'/'+g.levelIndex);
   check('restart clears the run-long rescue total', g.rescuedTotal===0, g.rescuedTotal);
 }
 
@@ -1221,6 +1246,123 @@ function runSuite(){
     step(1);
   }
   check('jumping clears it', g.player.hp===hp2, hp2+' -> '+g.player.hp);
+}
+
+// ── scenario 34: the mission select screen ───────────────────
+{
+  const {g,step,keys}=run({map:true});
+  check('the game opens on the mission select screen', g.STATE==='map', g.STATE);
+  check('there are four destinations', g.WORLDS.length===4, g.WORLDS.length);
+  check('the volcano is open from the start', g.worldState(0).playable===true);
+  check('the canopy starts locked', g.worldState(1).unlocked===false);
+  check('frozen peaks are locked', g.worldState(2).unlocked===false);
+  check('cyber crater is locked', g.worldState(3).unlocked===false);
+  check('a world with no stages can never be entered',
+        g.worldState(2).playable===false && g.worldState(3).playable===false);
+  g.drawWorldMap();
+  check('the map renders', true);
+
+  // the cursor only lands on nodes you can actually start
+  const before=g.mapSel;
+  keys({ArrowRight:true}); step(2); keys({ArrowRight:false}); step(2);
+  check('the cursor never parks on a locked node',
+        g.worldState(g.mapSel).playable===true, g.mapSel);
+  check('with one world open the cursor stays put', g.mapSel===before, g.mapSel);
+
+  // ENTER drops into the world
+  keys({Enter:true}); step(20); keys({Enter:false});
+  check('ENTER launches the highlighted world', g.STATE==='playing', g.STATE);
+  check('...at its first stage', g.levelIndex===0, g.levelIndex);
+  check('starting a world resets the score', g.score===0, g.score);
+  check('...and the credit sheet', g.continuesLeft===g.MAX_CONTINUES);
+}
+
+// ── scenario 35: progress persists ───────────────────────────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  g.finishWorld();
+  check('finishing a world marks it cleared', g.worldState(0).cleared===true);
+  check('...and unlocks the next', g.worldState(1).playable===true);
+  // It has to reach localStorage, not just the in-memory object — that is
+  // the whole point of the requirement, and checking the object alone passes
+  // even when the save is deleted.
+  const raw=store.getItem('neonDinoWorlds');
+  check('progress is written to localStorage', !!raw, String(raw));
+  let saved={};
+  try{ saved=JSON.parse(raw||'{}'); }catch(e){}
+  check('the cleared world survives a refresh',
+        saved.volcano && saved.volcano.cleared===true, raw);
+  check('so does the unlock it granted',
+        saved.forest && saved.forest.unlocked===true, raw);
+  // and once unlocked, the canopy is selectable and startable
+  g.mapSel=1;
+  check('the canopy can now be started', g.startWorld(1)===true);
+  check('...which loads the forest stage', g.levelIndex===3, g.levelIndex);
+}
+
+// ── scenario 36: the Toxic Canopy's biome ────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  check('the volcano is not the forest', g.isForest()===false);
+  const volcano=g.themeOf();
+  g.loadLevel(3);
+  step(3);
+  check('the forest stage reports its own biome', g.isForest()===true);
+  const forest=g.themeOf();
+  check('the pits change liquid with the biome',
+        forest.liquid[0]!==volcano.liquid[0],
+        volcano.liquid[0]+' vs '+forest.liquid[0]);
+  check('the acid is emerald', forest.liquid[0].toLowerCase()==='#10b981',
+        forest.liquid[0]);
+  // the whole forest terrain pass has to survive a frame, sprites or not
+  g.player.hp=99; g.player.invuln=999;
+  for(let i=0;i<40;i++){ g.player.invuln=999; step(1); }
+  g.drawBG(); g.drawLava(); g.drawPlatforms();
+  check('the forest renders ('+(FIRE_ONLOAD?'with art':'fallback')+')', true);
+  check('the forest stage has no boss yet, so its rift is open',
+        g.gateOpen===true, g.gateOpen);
+  // and the collision line still lands on the drawn surface
+  const ledge=g.platforms.filter(p=>p.y<g.GROUND_Y&&!p.goal)[0];
+  g.player.x=ledge.x+ledge.w/2-26; g.player.y=ledge.y-g.PLAYER_H-40;
+  g.player.vy=0; g.player.vx=0;
+  let worst=0, grounded=false;
+  for(let i=0;i<60;i++){
+    g.player.invuln=999; step(1);
+    if(i>=40){
+      worst=Math.max(worst,Math.abs((g.player.y+g.PLAYER_H)-ledge.y));
+      grounded=grounded||g.player.onGround;
+    }
+  }
+  check('the dino stands flush on the mossy ledge', grounded&&worst<0.5,
+        'worst='+worst.toFixed(3));
+
+  // ...and the DRAWN surface is on that same line. Physics alone cannot catch
+  // a mis-anchored sprite: the body band of forest_ground.png starts at its
+  // first solid row (426) and that row must be blitted exactly at p.y, with
+  // the grass tufts above it and the vines below.
+  if(FIRE_ONLOAD){
+    g.camX=Math.max(0,ledge.x-300);
+    drawStats.images.length=0;
+    g.drawPlatforms();
+    const bands=drawStats.images.filter(c=>c.sy===426);
+    check('the mossy body is cut from the first solid row of the block',
+          bands.length>0, bands.length);
+    check('...and laid exactly on the collision line',
+          bands.some(c=>Math.abs(c.dy-ledge.y)<0.001),
+          bands.map(c=>c.dy).join(','));
+    // drawPlatforms draws EVERY visible platform, so narrow each band to the
+    // ledge being measured instead of assuming the whole list belongs to it
+    const tufts=drawStats.images.filter(c=>c.sy===348);
+    check('grass tufts are drawn above that line',
+          tufts.some(c=>c.dy<ledge.y && c.dy>ledge.y-24),
+          tufts.map(c=>c.dy).join(','));
+    const vines=drawStats.images.filter(c=>c.sy===1074);
+    check('vines hang below the ledge into open air',
+          vines.some(c=>c.dy>ledge.y && c.dy<ledge.y+60),
+          vines.map(c=>c.dy).join(','));
+  }
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
