@@ -1,0 +1,12 @@
+# These files are edited by exact-string patching, and a silent CRLF
+# conversion breaks every patch anchor (it has happened). Keep them LF in the
+# working copy regardless of the machine's core.autocrlf setting.
+*.html  text eol=lf
+*.js    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+
+# art is binary — never touch it
+*.png   binary
+*.jpg   binary
+*.webp  binary

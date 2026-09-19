@@ -1,0 +1,94 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project overview
+
+This repository is a self-contained static HTML project with no build system, package manager, bundler, or dependency install step. There is nothing to compile — open the HTML file directly in a browser to run it.
+
+Two builds of the same game live here, both self-contained single-file HTML5 Canvas arcade platformers sharing the same sibling PNGs:
+
+- [index.html](index.html) — **NEON DINO-AGE**, the pure arcade build. Treat it as the stable baseline; it is the fallback if a story-mode change goes wrong.
+- [index2.html](index2.html) — **NEON DINO-AGE: RESCUE PROTOCOL**, the current build. Same engine plus the story layer (radio transmissions, the rescue train, the mission debrief). **New work goes here unless the request says otherwise.**
+
+The two files have drifted apart, so a fix that belongs in both has to be applied to both — there is no shared module to edit. Keep both on LF line endings. This bites in two ways: a Python rewrite on Windows silently converts the whole file to CRLF unless you pass `newline=''`, and this machine's git has `core.autocrlf=true` globally — either one breaks every exact-match patch anchor. [.gitattributes](.gitattributes) pins `*.html`/`*.js`/`*.md` to `eol=lf` and the repo sets `core.autocrlf=false` locally, so git is handled; the Python trap is still yours to avoid. A third one: **backslash escapes do not survive a bash heredoc here** — `[\\s\\S]` arrives as `[\s\S]` and a template literal then eats it down to `[sS]`. Write patch scripts to a file rather than piping them through a heredoc.
+
+The project is a git repository (`main`, identity set locally to Bago / bagerrsakalli@gmail.com — change it with `git config user.name` if that is wrong). Commit whenever a system reaches a working state; this is a single 150KB file being edited by exact-string patching, and being able to diff or roll back one change is worth more here than usual.
+
+(An earlier coffee-roastery demo page also used to live here; it is gone.)
+
+## The game (both builds)
+
+A ~900×506 Canvas game rendered with plain 2D context calls — no framework, no build step, no external JS libraries. Everything (game logic, rendering, audio synthesis) lives in one `<script>` block. Sprite art is loaded from the sibling PNGs — `bagodino.png` (player), `baby.png` (the caged captive you rescue), `enemy_fly.png`/`enemy_ground.png` (regular enemies), `enemyboss.png` (final boss), `beam.png`/`beam_hyper.png` (laser), `lava_wall.png`/`lava_ceiling.png` (cave decor — **index.html only now**), and in index2.html `portal.png` (the evacuation rift) and `ground.png` (the walking surface) — so do not rename these files without updating their `new Image().src` assignments.
+
+**About the terrain.** index2.html no longer draws `lava_wall.png` or `lava_ceiling.png` at all. The left-edge lava seam, the two procedural "lava falls" pinned at world x=0 and x=1100, the near-foreground obsidian outcrop layer (which scrolled at 0.92× and therefore read as a dark column hanging under every floating ledge) and the translucent orange box that used to mark each lava pit are all gone. index.html still uses them; do not "restore" any of it in index2.html.
+
+**About `ground.png`.** It is a 1024×1024 RGBA sheet: transparent down to row ~176, ragged spires from there, **fully opaque from row 424**, two bright molten seams (rows ~432 and ~536), then a mirrored hanging-rock underside that fades out past row ~656. `drawGroundCap()` uses the band starting at row 424 precisely because that is the first fully opaque row, which gives the strip a clean flat top edge — and that edge is drawn at exactly `p.y`, the same line the collision resolver stands the player on, so the dino's feet touch the texture instead of hovering over it. Do not move `GROUND_SRC_Y` up into the spires without also deciding what happens to that guarantee. The strip is **mirror-tiled** (every other tile flipped horizontally) because the art is not seamless; two flipped copies share an identical edge, so the repeat is invisible. Tile phase is anchored to world x, not screen x, or the texture swims when the camera scrolls.
+
+**About the portal asset.** `portal.jpg` is the original drop and is *not* a JPEG: it is a lossless WebP with an **opaque white background** (browsers decode it fine by content, so the extension is harmless). Drawn as-is it would put a white box over the cave, and keying the white out at runtime is impossible because reading pixels back from a `file://` image taints the canvas. `portal.png` is that file with the white keyed out and cropped to content, generated once with Windows Imaging Component — `BitmapDecoder` → `FormatConvertedBitmap` to Bgra32 → zero the alpha of low-saturation near-white pixels → `CroppedBitmap` → `PngBitmapEncoder`. `portal.jpg` itself is **no longer in the project** — only the derived `portal.png` is — so that recipe is history rather than a step you can re-run today; if the source art is ever replaced, apply the same keying rather than pointing the sprite at the raw drop. The sprite path itself tries `portal.png`, falls back to `portal.jpg` via `onerror`, and if neither loads the procedural obsidian arch keeps rendering on its own.
+
+**Every sprite path needs a fallback**, because images load asynchronously and the first frames render before they arrive. Existing code follows this consistently (procedural beam rectangles, a red placeholder box for the player, etc.); keep new sprite work the same way, and exercise both branches in the smoke test.
+
+Open the file directly in a browser to test — there's no dev server. Controls: arrows/WASD to move, Space/W/Up to jump (hold to jetpack), F/J to fire, Shift to air-dash.
+
+### Testing
+
+```
+node smoke-test.js            # tests index2.html — the default
+node smoke-test.js index.html # or any other build
+```
+
+[smoke-test.js](smoke-test.js) is the whole test setup: no framework, no dependencies, no dev server, one file. Run it after **every** change to either build; it is far faster than clicking through three stages by hand and it is the only practical way to catch runtime errors (TDZ, undefined refs, stage-transition breakage). Exit code is 0 only if every check in both passes passed, so it drops straight into a hook or CI if you ever want one.
+
+How it works: it extracts the `<script>` body, runs it under `node:vm` against a stubbed `document`/`window`/`Image`/`localStorage`, captures the `requestAnimationFrame` callback and drives real frames through it — these are genuine simulation runs, not mocks of the game's own logic. A `globalThis.__g = {...}` accessor block is appended to the extracted source to reach `let`-scoped internals (top-level `let`/`const` in a vm script are script-scoped, not on the sandbox global); **add a getter there when you need to assert on something new.** The stubbed 2D context records a couple of things (`drawStats`) so a scenario can assert on what was actually drawn, which is how the ground strip's source row is checked.
+
+It runs every scenario **twice** — once with the `Image` stub firing `onload` and once with it never firing — so both the sprite and the fallback draw paths execute. The fallbacks in this project are load-bearing, not decoration.
+
+**A test that never fails is not protection.** When adding coverage, plant the regression you think you are catching and confirm the suite goes red: three planted breaks (follower cap, boss hit-stop duration, ground source row) were how the missing ground-row assertion was found — the first two were caught and the third sailed through. Also note the sim has real randomness, so scenarios needing a live simulation should force `STATE='playing'` plus full HP/invulnerability first, or the dino may die mid-scenario and `update()` will early-return, silently making later assertions meaningless.
+
+Two more traps worth knowing before writing a scenario:
+
+- **Teleporting the player forward doesn't work at ground height.** Parking it at `y=300` and nudging `x` each frame wedges it against the left face of a floating ledge, and the x-resolution shoves it straight back — the dino never advances and the scenario quietly tests nothing. Fly it along at `y=140` with `vy=0` instead, clear of every platform.
+- **The boss trigger is gated on the arena wave.** To reach it, first mark every enemy with `arenaEnemy` as `dead`, otherwise the camera lock pins the player inside the band and `arenaCleared` never flips.
+- **`drawPlatforms()` culls off-screen platforms.** Any probe that measures what the exit portal draws has to scroll `camX` onto the goal platform first, or it measures an empty loop body and passes for the wrong reason.
+- **Never assert `player.onGround` on a single frame.** A resting player sits at exactly `p.y - PLAYER_H`, where `overlaps()` is false by a hair (it tests `a.y+a.h > b.y`, not `>=`). So the engine alternates between a settle frame and a resolve frame, and `onGround` flickers while the foot line wobbles by a fraction of a pixel. This is original engine behaviour, not a regression — assert on the worst deviation across a run of frames instead.
+
+The shape that works: drive real frames through `loop()`, assert on state through the `__g` accessor, and call the draw functions directly (`drawRadio`, `drawMissionReport`, `drawArenaBanners`, `drawPlatforms`, `drawWin`, `drawGameOver`) so the render paths are exercised even though the stubbed context draws nothing.
+
+A quick syntax-only check: `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"`.
+
+### Stage structure
+
+The game runs **three hand-authored stages**, and only the last one has a boss. Everything stage-specific (platforms, lava pits, coins, enemy spawns, pickups, cages, arena band, boss, and in index2.html the debrief's `escapeLine`) lives in the `LEVELS` table; `loadLevel(i)` rebuilds every live entity array from it, so no other system needs to know which stage is running. Stages 1–2 end at an exit portal that starts already open (`gateOpen = !bossSpec`); stage 3's portal stays sealed until the boss dies. Score, HP and power-ups carry across stages; `loadLevel()` resets position, camera and entities.
+
+In index2.html every stage carries **exactly three cages**, because the debrief tallies "X / 3". Keep it that way when editing the table. Keep stage 3's cages *before* `BOSS_TRIGGER_X` too — a cage inside the boss arena is one the player has to fight around to reach, and the encounter is busy enough.
+
+A stage no longer ends by itself. In the original build, killing the boss counted down `stageClearDelay` and then called `endLevel()` outright; in index2.html that countdown only fires the evacuation transmission, and the stage ends when the player physically walks the rescue train into the rift. If you add a stage-ending condition, route it through `startPortalWarp()` so the warp animation still plays.
+
+`loadLevel(0)` is deliberately called at the *bottom* of the script, after every `let` it touches has been initialised — calling it earlier hits the temporal dead zone.
+
+### Story systems (index2.html only)
+
+Three systems sit on top of the arcade engine. All three are deliberately thin: none of them can stall the simulation.
+
+**Radio transmissions** are a pixel comms window in the top-left (`RADIO_X/RADIO_Y`, screen space — never apply `camX` in that block). `queueRadio(key,title,lines,opts)` is dedupe-keyed per stage via `radioFired`, which `loadLevel()` clears; `opts.urgent` pre-empts whatever is on the air and pushes it back onto the queue rather than dropping it. Lines are **pre-wrapped by hand** — there is no runtime text measuring — so keep them under ~40 characters at 12px Courier or they run out of the window. `updateRadio(dt)` is called from `loop()`, *not* from `update()`, so a transmission keeps playing through a hit-stop freeze and never costs the player a frame of control.
+
+**The rescue train**: a hatchling freed from a cage joins `followers` (max 3) instead of vanishing. Each link replays the player's own recorded path a fixed delay behind the link ahead of it (`playerTrail` + `trailSampleAt(delay)`), which is what makes them scamper and hover exactly where you went instead of homing in a straight line. `playerTrail` is world space. Any code that **teleports** the player (the lava/fall respawn) must call `snapFollowersToPlayer()`, or the chain whips across the level chasing a trail that no longer connects to anything.
+
+**The evacuation portal** is `portal.png` drawn over the procedural arch on the goal platform, spinning slowly on its own axis with a breathing scale pulse and an additive (`globalCompositeOperation = "lighter"`) neon bloom behind it. It materialises via `portalReveal` (0→1), which `initBoss()` sets to 1 on bossless stages and `killBoss()` resets to 0 so the rift spins up out of nothing when the Alpha falls. The procedural obsidian arch underneath it is a **stand-in, not scenery**: it is drawn only while the gate is sealed, or if `portal.png` never loads. `portal.png` has transparent gaps, so anything drawn behind it shows through as a door silhouette — which is exactly what the arch did until it was gated behind `showArch`. For the same reason the exit ledge uses the ordinary platform body and `ground.png` cap rather than the flat grey slab it used to have. Touching it calls `startPortalWarp()` and switches to `STATE="warp"`: `drawWarped()` scales, spins and fades everything it wraps about the rift's centre, which pulls the dino and every hatchling in proportionally in one transform instead of animating each entity separately. `goalPortalPos()` is the single source of truth for where the rift is, in world space.
+
+**The mission debrief** replaces the old between-stage banner: reaching the portal calls `endLevel()`, which scores the rescue and combo bonuses and switches to `STATE="report"`. The card is a retro typewriter driven entirely off `reportTimer` — it holds no per-line state, so it is a pure function of elapsed time and nothing needs resetting. `drawMissionReport()` publishes its own finish time as `reportTypeEnd` so the update step knows how long to keep clacking. If you add or reword a line, re-check that the typing time still lands comfortably inside `REPORT_AUTO`.
+
+**Coordinate spaces — the single most important thing to get right here.** Entity positions (`player.x/y`, enemy/coin/drop `x/y`, platform coordinates) are stored in *world space* and are camera-independent. `camX` is the camera's horizontal scroll offset, subtracted only at draw time (`entity.x - camX`) to get a screen coordinate. Several real bugs in this codebase's history came from adding `camX` a second time into a value that was already world-space (e.g. treating `player.x + camX` as if it needed converting when it didn't), which silently desyncs collision/visual math as soon as the camera starts scrolling. When touching collision, spawn-position, or hit-testing code, check whether each coordinate is already world-space before applying `camX`. Note that `drawParticles()` renders particle positions with no further camX subtraction, so anything pushed into the `particles` array must already be in screen space at spawn time (convert with `x - camX` when spawning from a world-space position).
+
+**Timing is delta-time based**, not fixed-frame. `update(dt)` receives real elapsed seconds every call; all movement, cooldowns, particle lifetimes, and timers are scaled by `dt`, not by an assumed frame rate — keep new code consistent with this or it will run at the wrong speed on different refresh rates. `hitStopTimer > 0` causes `loop()` to skip calling `update(dt)` entirely for a freeze-frame effect on impactful hits.
+
+**Entity lifecycle pattern.** Enemies and the boss share a `dying → deathTimer countdown → dead` pattern (a brief full-bright flash frame before the actual kill/explosion resolves) rather than being removed on the frame their HP hits zero. The boss additionally has an `introState` machine (`pending → warning → descending → active`) gating whether it can be targeted, attack, or deal contact damage — any state-dispatch code must handle `pending` explicitly (a bare fallthrough `else` for the "active" branch is a bug that was fixed once already, since `pending` would otherwise inherit full active-fight behavior before the encounter is even triggered).
+
+**Sprite fitting.** Sprites are drawn from a bounding box computed once on image load (`computeSpriteBBox`), not from the raw image dimensions — source PNGs carry a lot of transparent margin, and scaling the whole frame into a fixed box shrinks the art and throws off where the feet land. The helper takes an `excludeGroundSmoke` flag that also discards near-white low-contrast pixels; that was needed for an older player PNG with a baked-in dust puff. Pass `false` for clean art (e.g. `baby.png`), or the heuristic can eat legitimate white details.
+
+**Anything anchored to the player's art must use `playerSpriteMetrics()`**, not `PLAYER_W`/`PLAYER_H`. The drawn sprite is `SPRITE_SCALE`× the physics hitbox and is anchored at the feet, so hitbox-relative offsets land in the wrong place — this is exactly what put the jetpack flame out of the dino's hip instead of its backpack. The helper returns the drawn rect plus a facing-mirrored nozzle position.
+
+**Jetpack thrust is a real force**, applied every frame the button is held, with gravity fighting it — so `JET_THRUST` must comfortably exceed `GRAV` or holding jump merely hovers. The rise cap is a *soft* terminal velocity (excess bled off exponentially), not a clamp: a hard clamp snapped velocity the instant you held jump after a jump kick, and a "only thrust while below the cap" guard instead created a dead zone that burned fuel with zero thrust.
+
+**Audio is fully synthesized** via the Web Audio API (oscillators/noise buffers) — there are no external sound files. Background music and sound effects only start after the first user gesture (`ensureAudio`, bound to the first keydown/pointerdown), per browser autoplay policy.

@@ -1,0 +1,600 @@
+// ============================================================
+//  NEON DINO-AGE — headless smoke test
+//
+//    node smoke-test.js            → tests index2.html
+//    node smoke-test.js some.html  → tests another build
+//
+//  No dependencies, no framework, no dev server. It pulls the game's
+//  <script> body out of the HTML, runs it under node:vm against a stubbed
+//  document / canvas / Image / localStorage, captures the
+//  requestAnimationFrame callback, then drives real frames through it — so
+//  these are genuine simulation runs, not mocks of the game's own logic.
+//
+//  Every scenario runs TWICE: once with the Image stub firing onload (the
+//  sprite draw paths) and once with it never firing (the fallback draw
+//  paths). Both matter — several of this game's assets are optional by
+//  design and the fallbacks are load-bearing.
+//
+//  Reaching the game's script-scoped `let`s needs the __g accessor block
+//  appended to the extracted source below: top-level let/const in a vm
+//  script are script-scoped, not properties of the sandbox global.
+//
+//  Exit code is 0 only if every check in BOTH passes passed.
+// ============================================================
+const fs=require('fs');
+const vm=require('node:vm');
+const path=require('path');
+
+const TARGET=path.resolve(process.argv[2]||path.join(__dirname,'index2.html'));
+const html=fs.readFileSync(TARGET,'utf8');
+const body=html.match(/<script>([\s\S]*)<\/script>/)[1];
+
+let FIRE_ONLOAD=true;      // flipped by the driver at the bottom
+let failures=0, checks=0;
+function check(name,cond,extra){
+  checks++;
+  if(cond) console.log('  PASS  '+name);
+  else { failures++; console.log('  FAIL  '+name+(extra!==undefined?('  ['+extra+']'):'')); }
+}
+
+// ── stub canvas 2d context ────────────────────────────────────
+const drawStats={quad:0, images:[]};
+function makeCtx(){
+  const grad={addColorStop(){}};
+  const target={
+    canvas:{width:900,height:506},
+    save(){},restore(){},translate(){},rotate(){},scale(){},
+    beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},
+    quadraticCurveTo(){ drawStats.quad++; },bezierCurveTo(){},rect(){},clip(){},
+    fill(){},stroke(){},fillRect(){},strokeRect(){},clearRect(){},
+    fillText(){},strokeText(){},setLineDash(){},
+    drawImage(img,sx,sy,sw,sh,dx,dy,dw,dh){
+      // only the 9-arg form carries a source rect, which is what the ground
+      // strip uses; the 3-arg form is recorded as a plain blit
+      if(arguments.length>=9) drawStats.images.push({sx,sy,sw,sh,dx,dy,dw,dh});
+      else drawStats.images.push({dx:sx,dy:sy});
+    },
+    createLinearGradient(){return grad;},createRadialGradient(){return grad;},
+    createPattern(){return null;},
+    measureText(s){return {width:(s||'').length*7};},
+    getImageData(w,h){ return {data:new Uint8ClampedArray(4*64*64).fill(255)}; },
+    putImageData(){},
+  };
+  return new Proxy(target,{
+    get(o,k){ if(k in o) return o[k]; return undefined; },
+    set(o,k,v){ o[k]=v; return true; }
+  });
+}
+
+function run(){
+  const rafQueue=[];
+  const listeners={};
+  const sandbox={
+    console,
+    Math,Date,JSON,Number,String,Array,Object,Boolean,Error,
+    Uint8ClampedArray,Float32Array,
+    setTimeout(fn,ms){ return 0; },       // never actually fires
+    clearTimeout(){}, setInterval(){return 0;}, clearInterval(){},
+    requestAnimationFrame(fn){ rafQueue.push(fn); return rafQueue.length; },
+    localStorage:{ _d:{}, getItem(k){return this._d[k]||null;}, setItem(k,v){this._d[k]=String(v);} },
+  };
+  sandbox.window=sandbox;
+  sandbox.globalThis=sandbox;
+  sandbox.window.innerWidth=1280; sandbox.window.innerHeight=720;
+  sandbox.window.addEventListener=(ev,fn)=>{ (listeners[ev]=listeners[ev]||[]).push(fn); };
+  sandbox.window.removeEventListener=()=>{};
+  sandbox.window.AudioContext=undefined;      // ensureAudio bails out cleanly
+  sandbox.window.webkitAudioContext=undefined;
+  sandbox.document={
+    getElementById(){ return { width:0,height:0,style:{}, getContext(){ return makeCtx(); } }; },
+    createElement(){ return { width:0,height:0,style:{}, getContext(){ return makeCtx(); } }; },
+    addEventListener(){},
+  };
+  const loadedImages=[];
+  sandbox.Image=class{
+    constructor(){ this.naturalWidth=64; this.naturalHeight=64; this.onload=null; loadedImages.push(this); }
+    set src(v){ this._src=v; if(FIRE_ONLOAD && this.onload) this.onload(); }
+    get src(){ return this._src; }
+  };
+
+  const ctxObj=vm.createContext(sandbox);
+  // accessor block appended so the test can reach script-scoped `let`s
+  const accessor=`
+;globalThis.__g={
+  get STATE(){return STATE;}, set STATE(v){STATE=v;},
+  get player(){return player;},
+  get radio(){return radio;}, set radio(v){radio=v;},
+  get radioQueue(){return radioQueue;},
+  get radioFired(){return radioFired;},
+  get followers(){return followers;}, get playerTrail(){return playerTrail;},
+  get rescuedThisLevel(){return rescuedThisLevel;},
+  get rescuedTotal(){return rescuedTotal;},
+  get cages(){return cages;}, get levelIndex(){return levelIndex;},
+  get enemies(){return enemies;}, get groundEnemies(){return groundEnemies;},
+  get LEVELS(){return LEVELS;}, get boss(){return boss;},
+  get gateOpen(){return gateOpen;}, set gateOpen(v){gateOpen=v;},
+  get score(){return score;}, get camX(){return camX;}, set camX(v){camX=v;},
+  get reportTimer(){return reportTimer;}, set reportTimer(v){reportTimer=v;},
+  get lastRescueBonus(){return lastRescueBonus;},
+  get babyDinos(){return babyDinos;},
+  get particles(){return particles;},
+  get t(){return t;},
+  get arenaCleared(){return arenaCleared;}, get cameraLock(){return cameraLock;},
+  get drops(){return drops;}, get hitStopTimer(){return hitStopTimer;},
+  get portalReveal(){return portalReveal;},
+  get groundLoaded(){return groundLoaded;},
+  get platforms(){return platforms;},
+  get GROUND_Y(){return GROUND_Y;}, get PLAYER_H(){return PLAYER_H;},
+  get GROUND_SRC_Y(){return GROUND_SRC_Y;}, get GROUND_SRC_H(){return GROUND_SRC_H;},
+  drawGroundCap:(a,b,c,d,e)=>drawGroundCap(a,b,c,d,e),
+  drawPlatforms:()=>drawPlatforms(),
+  drawBG:()=>drawBG(), drawLava:()=>drawLava(),
+  get portalLoaded(){return portalLoaded;},
+  get warpTimer(){return warpTimer;},
+  get goalReached(){return goalReached;},
+  get stageClearDelay(){return stageClearDelay;},
+  goalPortalPos:()=>goalPortalPos(),
+  get lastComboBonus(){return lastComboBonus;},
+  get bestChainThisLevel(){return bestChainThisLevel;},
+  get reportTypeEnd(){return reportTypeEnd;},
+  get warningBannerTimer(){return warningBannerTimer;},
+  set warningBannerTimer(v){warningBannerTimer=v;},
+  killBoss:()=>killBoss(),
+  drawArenaBanners:()=>drawArenaBanners(),
+  addChain:(n)=>addChain(n),
+  get BOSS_TRIGGER_X(){return BOSS_TRIGGER_X;},
+  get bossIntroTriggered(){return bossIntroTriggered;},
+  breakCage:(c)=>breakCage(c),
+  endLevel:()=>endLevel(),
+  loadLevel:(i)=>loadLevel(i),
+  updateRadio:(dt)=>updateRadio(dt),
+  drawRadio:()=>drawRadio(),
+  drawMissionReport:()=>drawMissionReport(),
+  drawWin:()=>drawWin(),
+  drawGameOver:()=>drawGameOver(),
+  queueRadio:(...a)=>queueRadio(...a),
+  restartGame:()=>restartGame(),
+  updateFollowers:(dt)=>updateFollowers(dt),
+  drawFollowers:()=>drawFollowers(),
+  lavaPits:()=>lavaPits,
+};`;
+  vm.runInContext(body+accessor,ctxObj,{filename:'index2.html'});
+
+  const g=sandbox.__g;
+  // the boot does rAF(t=>{lastTime=t; rAF(loop)}) — drain it to get `loop`
+  let frame=rafQueue.shift(); frame(0);
+  let loop=rafQueue.shift();
+  let now=0;
+  function step(n,dtMs){
+    for(let i=0;i<n;i++){
+      now+=(dtMs||16.7);
+      loop(now);
+      const next=rafQueue.shift();
+      if(next) loop=next;
+    }
+  }
+  function keys(obj){
+    // the game reads K[...] directly; reach it through a synthetic keydown
+    for(const [code,down] of Object.entries(obj)){
+      const fns=listeners[down?'keydown':'keyup']||[];
+      for(const fn of fns) fn({code});
+    }
+  }
+  return {g,step,keys,sandbox,loadedImages,rafQueue,drawStats};
+}
+
+function runSuite(){
+
+// ── scenario 1: boot + free run ───────────────────────────────
+{
+  const {g,step}=run();
+  check('boots into playing state', g.STATE==='playing', g.STATE);
+  check('stage-open transmission is on the air', !!g.radio && g.radioFired.start===true);
+  check('opening transmission carries the eruption warning',
+        !!g.radio && g.radio.lines[0].indexOf('Volkan patlıyor')>=0, g.radio&&g.radio.lines[0]);
+  check('three cages in stage 1', g.cages.length===3, g.cages.length);
+  step(120);   // ~2s of real frames, radio open→type→hold
+  check('no crash over 120 frames', true);
+  check('radio advanced past its open wipe', !g.radio || g.radio.phase!=='open', g.radio&&g.radio.phase);
+}
+
+// ── scenario 2: radio lifecycle, every phase drawn ────────────
+{
+  const {g,step}=run();
+  const seen={};
+  for(let i=0;i<600;i++){
+    step(1);
+    if(g.radio){ seen[g.radio.phase]=true; g.drawRadio(); }
+  }
+  check('radio reached the type phase', !!seen.type, Object.keys(seen).join(','));
+  check('radio reached the hold phase', !!seen.hold);
+  check('radio closed and cleared itself', !!seen.close || g.radio===null);
+  // an urgent call must cut over a running one
+  g.queueRadio('t1','A',['aaa'],{});
+  const first=g.radio;
+  g.queueRadio('t2','B',['bbb'],{urgent:true});
+  check('urgent transmission pre-empts the current one', g.radio!==first && g.radio.title==='B');
+  check('pre-empted transmission is requeued, not dropped', g.radioQueue.indexOf(first)>=0);
+  g.queueRadio('t2','B2',['ccc'],{});
+  check('a repeated key never fires twice in one stage', g.radio.title==='B');
+}
+
+// ── scenario 3: rescue train ──────────────────────────────────
+{
+  const {g,step,keys}=run();
+  // keep the dino alive and moving so the trail has real history
+  g.player.hp=99; g.player.invuln=999;
+  step(30);
+  const cages=g.cages.slice();
+  g.breakCage(cages[0]);
+  check('freeing a cage adds a follower', g.followers.length===1, g.followers.length);
+  check('rescue counter ticks up', g.rescuedThisLevel===1 && g.rescuedTotal===1);
+  check('a rescue transmission goes out', !!g.radioFired.rescue1);
+  g.player.invuln=999;
+  step(40);
+  g.breakCage(cages[1]); g.player.invuln=999; step(40);
+  g.breakCage(cages[2]); g.player.invuln=999; step(40);
+  check('train holds all three hatchlings', g.followers.length===3, g.followers.length);
+  check('all-clear transmission fires on the last cage', !!g.radioFired.allsafe);
+  // a fourth rescue must push the front one off the train, not grow it
+  g.breakCage({x:200,y:300,alive:true});
+  check('train is capped at three', g.followers.length===3, g.followers.length);
+  check('the displaced hatchling runs off on its own', g.babyDinos.length===1, g.babyDinos.length);
+  // the chain must TRAIL a running player, and space itself out along the way
+  keys({ArrowRight:true});
+  for(let i=0;i<120;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  g.drawFollowers();
+  const pcx=g.player.x+53/2;
+  const gaps=g.followers.map(f=>pcx-f.x);
+  check('hatchlings lag behind a running player', gaps.every(d=>d>4),
+        gaps.map(n=>n.toFixed(1)).join(','));
+  check('the chain is ordered, not stacked', gaps[0]<gaps[1] && gaps[1]<gaps[2],
+        gaps.map(n=>n.toFixed(1)).join(','));
+  keys({ArrowRight:false});
+  check('trail history is bounded', g.playerTrail.length<600, g.playerTrail.length);
+  check('followers stay finite', g.followers.every(f=>isFinite(f.x)&&isFinite(f.y)));
+}
+
+// ── scenario 4: heat transmission near the lava pits ──────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  const pit=g.lavaPits()[0];
+  g.player.x=pit.x-60; g.player.y=360;
+  g.player.invuln=999;
+  step(3);
+  check('lava-pit proximity fires the heat transmission', !!g.radioFired.heat);
+  const msg=g.radio&&g.radio.lines.join(' ');
+  check('heat transmission tells the player to jetpack',
+        !!msg && msg.indexOf('Jetpack')>=0 && msg.indexOf('SICAKLIK')>=0, msg);
+}
+
+// ── scenario 5: mission debrief + stage advance ───────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(10);
+  const before=g.score;
+  g.breakCage(g.cages[0]);
+  g.endLevel();
+  check('portal hands over to the debrief', g.STATE==='report', g.STATE);
+  check('rescue payout is scored', g.score>before && g.lastRescueBonus===500, g.lastRescueBonus);
+  check('the rescue train boards the capsule', g.followers.length===0);
+  check('nothing is left on the air over a dark screen', g.radio===null && g.radioQueue.length===0);
+  step(30); g.drawMissionReport();
+  check('debrief renders', true);
+  check('ENTER is ignored before the panel has read in', g.STATE==='report');
+  keys({Enter:true});
+  step(200);   // > REPORT_MIN
+  check('ENTER rolls into the next stage', g.STATE==='playing' && g.levelIndex===1,
+        g.STATE+'/'+g.levelIndex);
+  check('the new stage re-arms its transmissions', !!g.radioFired.start && g.rescuedThisLevel===0);
+  check('rescue total carries across stages', g.rescuedTotal===1, g.rescuedTotal);
+}
+
+// ── scenario 6: debrief auto-advances with no input ───────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  g.endLevel();
+  step(1050);  // ~17.5s, past REPORT_AUTO (the card types for ~8s)
+  check('debrief auto-advances without input', g.STATE==='playing' && g.levelIndex===1,
+        g.STATE+'/'+g.levelIndex);
+}
+
+// ── scenario 7: final stage → victory screen ──────────────────
+{
+  const {g,step,keys}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('stage 3 portal starts sealed', g.gateOpen===false);
+  check('stage 3 has three cages', g.cages.length===3, g.cages.length);
+  g.breakCage(g.cages[0]); g.breakCage(g.cages[0]); g.breakCage(g.cages[0]);
+  g.endLevel();
+  check('final stage also debriefs first', g.STATE==='report', g.STATE);
+  check('full-brood bonus applied', g.lastRescueBonus===2500, g.lastRescueBonus);
+  step(30); g.drawMissionReport();
+  keys({Enter:true});
+  step(200);
+  check('debrief hands over to the victory screen', g.STATE==='win', g.STATE);
+  g.drawWin();
+  check('victory screen renders', true);
+  g.restartGame();
+  check('restart returns to stage 1', g.STATE==='playing' && g.levelIndex===0);
+  check('restart clears the run-long rescue total', g.rescuedTotal===0, g.rescuedTotal);
+}
+
+// ── scenario 8: boss intro still fires its transmission ───────
+{
+  const {g,step}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  g.STATE='playing';
+  // clear the mandatory arena wave first — the boss trigger is gated on it
+  for(const e of g.enemies) if(e.arenaEnemy) e.dead=true;
+  for(const e of g.groundEnemies) if(e.arenaEnemy) e.dead=true;
+  // then walk the dino onto the boss trigger line
+  for(let i=0;i<400;i++){
+    g.player.invuln=999; g.player.hp=99;
+    // fly the dino along well clear of the floating platforms — parking it at
+    // y=300 wedges it against a ledge's left face and it never advances
+    g.player.x=Math.min(1400,g.player.x+6);
+    g.player.y=140; g.player.vy=0;
+    step(1);
+    if(g.radioFired.boss) break;
+  }
+  check('the Alpha announcement goes out at the boss trigger', !!g.radioFired.boss);
+  const bossMsg=g.radio&&g.radio.lines.join(' ');
+  check('Alpha transmission is the warning line',
+        !!bossMsg && bossMsg.indexOf('ALFA TEHDİT')>=0, bossMsg);
+  check('boss intro state machine engaged', g.boss && g.boss.introState!=='pending',
+        g.boss&&g.boss.introState);
+}
+
+// ── scenario 10: the Alpha's WARNING! transition ──────────────
+{
+  const {g,step}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  for(const e of g.enemies) if(e.arenaEnemy) e.dead=true;
+  for(const e of g.groundEnemies) if(e.arenaEnemy) e.dead=true;
+  for(let i=0;i<400;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=Math.min(1400,g.player.x+6);
+    g.player.y=140; g.player.vy=0;
+    step(1);
+    if(g.bossIntroTriggered) break;
+  }
+  check('reaching the end of the stage locks the camera', g.cameraLock===true);
+  check('the WARNING banner is up', g.warningBannerTimer>0, g.warningBannerTimer);
+  g.drawArenaBanners();
+  check('WARNING banner renders', true);
+  check('the Alpha carries 12 hit points', g.boss && g.boss.maxHp===12, g.boss&&g.boss.maxHp);
+  // ride the intro out: warning → descending → active
+  const seen={};
+  for(let i=0;i<400;i++){
+    g.player.invuln=999; g.player.hp=99; g.player.y=140; g.player.vy=0;
+    step(1);
+    if(g.boss) seen[g.boss.introState]=true;
+    if(g.boss && g.boss.introState==='active') break;
+  }
+  check('intro runs warning → descending → active',
+        seen.warning && seen.descending && seen.active, Object.keys(seen).join(','));
+  check('the Alpha settles into the air, not on the ground', g.boss.y<300, g.boss&&g.boss.y);
+
+  // boss death payout
+  const before=g.drops.length;
+  g.boss.hp=0; g.killBoss();
+  const bossCoins=g.drops.filter(d=>d.kind==='bosscoin').length;
+  check('boss death erupts in Boss Coins', bossCoins===16, bossCoins);
+  check('...on top of the gem piñata', g.drops.length>before+16, g.drops.length-before);
+  check('boss death freezes the frame for 120ms', Math.abs(g.hitStopTimer-0.12)<1e-9, g.hitStopTimer);
+  check('the obsidian portal unseals', g.gateOpen===true);
+}
+
+// ── scenario 11: typewriter debrief + combo bonus ─────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(10);
+  g.addChain(6);                       // a chain worth a real bonus
+  check('best chain is tracked', g.bestChainThisLevel===6, g.bestChainThisLevel);
+  g.breakCage(g.cages[0]); g.breakCage(g.cages[0]); g.breakCage(g.cages[0]);
+  const before=g.score;
+  g.endLevel();
+  check('combo bonus is scored at the portal', g.lastComboBonus===1500, g.lastComboBonus);
+  check('both bonuses land on the score',
+        g.score===before+g.lastComboBonus+g.lastRescueBonus, g.score-before);
+  // drive the card through its whole typing pass
+  let firstEnd=0;
+  for(let i=0;i<500;i++){ step(1); g.drawMissionReport(); if(!firstEnd) firstEnd=g.reportTypeEnd; }
+  check('typewriter publishes a finish time', g.reportTypeEnd>4 && g.reportTypeEnd<12, g.reportTypeEnd);
+  check('the card finishes typing before it auto-advances', g.reportTypeEnd<14, g.reportTypeEnd);
+  check('card still renders once fully typed', true);
+  keys({Enter:true}); step(5);
+  check('ENTER still dismisses the card', g.STATE==='playing', g.STATE);
+}
+
+// ── scenario 12: walking into the rift (stage with no boss) ───
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('a bossless stage has its rift standing open', g.portalReveal===1, g.portalReveal);
+  const pp=g.goalPortalPos();
+  check('the rift sits on the goal platform', pp.x>1100 && pp.y>200 && pp.y<330,
+        pp.x+','+pp.y);
+  // park the dino in the mouth of the rift
+  g.player.x=pp.x-26; g.player.y=pp.y-30; g.player.vx=0; g.player.vy=0;
+  step(1);
+  check('contact starts the warp', g.STATE==='warp', g.STATE);
+  check('the warp marks the goal as reached', g.goalReached===true);
+  check('the beam is cut when the warp starts', true);
+  // the pull, drawn frame by frame
+  let mid=null;
+  for(let i=0;i<90;i++){ step(1); if(!mid && g.warpTimer>0.5) mid=g.warpTimer; }  // > WARP_DUR
+  check('the warp runs for about a second then hands over to the debrief',
+        g.STATE==='report', g.STATE+' warpTimer='+g.warpTimer.toFixed(2));
+  check('the rift threw particles while it pulled', g.particles.length>0, g.particles.length);
+}
+
+// ── scenario 13: the Alpha's rift, and no more auto-advance ───
+{
+  const {g,step}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the rift is absent until the Alpha falls', g.portalReveal===0, g.portalReveal);
+  check('...and the gate is sealed', g.gateOpen===false);
+  // kill the Alpha through the real dying → dead → killBoss path
+  g.boss.dying=true; g.boss.deathTimer=0.02;
+  for(let i=0;i<10;i++){ g.player.invuln=999; step(1); if(g.boss.dead) break; }
+  check('the Alpha dies through its death sequence', g.boss.dead===true);
+  check('the gate unseals on the kill', g.gateOpen===true);
+  check('the rift starts materialising from nothing', g.portalReveal<1, g.portalReveal);
+  for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('the rift finishes materialising', g.portalReveal===1, g.portalReveal);
+  // ~4s later the stage must STILL be running — no auto-advance any more
+  for(let i=0;i<240;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('the stage no longer ends by itself after the boss', g.STATE==='playing', g.STATE);
+  check('the evacuation call goes out instead', !!g.radioFired.evac);
+  // now walk in
+  const pp=g.goalPortalPos();
+  g.player.x=pp.x-20; g.player.y=pp.y-30; g.player.vx=0; g.player.vy=0;
+  step(1);
+  check('walking into the Alpha stage rift warps out', g.STATE==='warp', g.STATE);
+  for(let i=0;i<120;i++) step(1);
+  check('final stage warp lands on the debrief', g.STATE==='report', g.STATE);
+}
+
+// ── scenario 14: the ground.png surface + its collision line ──
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('ground.png is wired up', g.groundLoaded===FIRE_ONLOAD, g.groundLoaded);
+  // the whole background/terrain pass must survive a frame either way
+  g.drawBG(); g.drawLava(); g.drawPlatforms();
+  check('terrain pass renders (' + (FIRE_ONLOAD?'tiled':'procedural fallback') + ')', true);
+  // the tile helper itself, on a platform-sized and a level-sized span
+  drawStats.images.length=0;
+  g.drawGroundCap(0, 0, 430, 120, 22);
+  g.drawGroundCap(-350, 1130, 430, 670, 44);
+  check('the tiler handles both a ledge and the whole cave floor', true);
+
+  if(FIRE_ONLOAD){
+    const caps=drawStats.images.filter(c=>c.sh===g.GROUND_SRC_H);
+    check('the surface strip is actually tiled out', caps.length>=2, caps.length);
+    // ground.png is fully transparent until row ~176 and only becomes 100%
+    // opaque at row 424. Cutting the strip anywhere above that gives it a
+    // ragged top edge, and the flat edge IS the line the player stands on —
+    // so the source row is a correctness invariant, not a style choice.
+    check('the strip is cut from the sheet\'s first fully-opaque row (424)',
+          g.GROUND_SRC_Y===424 && caps.every(c=>c.sy===424),
+          'GROUND_SRC_Y='+g.GROUND_SRC_Y);
+    // unmirrored tiles blit straight to the platform top; mirrored ones go
+    // through a translate, so their recorded dy is 0 by construction
+    check('the strip is laid on the collision line, not above or below it',
+          caps.some(c=>c.dy===430) && caps.every(c=>c.dy===430||c.dy===0),
+          caps.map(c=>c.dy).join(','));
+  }
+
+  // THE invariant the new art depends on: a standing dino's feet are exactly
+  // on p.y, which is the same line the ground strip is drawn from
+  // (note: a resting dino sits EXACTLY on p.y, where overlaps() is false by
+  // a hair, so the engine alternates resolve/settle frames. That is original
+  // engine behaviour — measure the worst foot-line deviation, not one frame.)
+  function settleOn(plat,startX){
+    g.player.x=startX; g.player.y=plat.y-g.PLAYER_H-40; g.player.vy=0; g.player.vx=0;
+    let worst=0, grounded=false;
+    for(let i=0;i<60;i++){
+      g.player.invuln=999; step(1);
+      if(i>=40){
+        worst=Math.max(worst,Math.abs((g.player.y+g.PLAYER_H)-plat.y));
+        grounded=grounded||g.player.onGround;
+      }
+    }
+    return {worst,grounded};
+  }
+  const floor=g.platforms.filter(p=>!p.lavaPit&&!p.goal&&p.y===g.GROUND_Y)[0];
+  const fr=settleOn(floor,floor.x+120);
+  check('the dino lands flush on the cave floor line, not above it',
+        fr.grounded && fr.worst<0.5, 'worst='+fr.worst.toFixed(3)+' grounded='+fr.grounded);
+
+  const ledge=g.platforms.filter(p=>p.y<g.GROUND_Y&&!p.goal)[0];
+  const lr=settleOn(ledge,ledge.x+ledge.w/2-26);
+  check('...and flush on a floating ledge too',
+        lr.grounded && lr.worst<0.5, 'worst='+lr.worst.toFixed(3)+' grounded='+lr.grounded);
+}
+
+// ── scenario 15: no stand-in arch behind the real rift ────────
+{
+  const {g,step,drawStats}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  // stage 1's gate is open from the start. With the sprite loaded the
+  // procedural arch must not be drawn at all — portal.png is transparent in
+  // places, so the arch showed through it as a door silhouette.
+  g.camX=400;   // scroll the exit into view — drawPlatforms culls off-screen
+  drawStats.quad=0;
+  g.drawPlatforms();
+  if(FIRE_ONLOAD){
+    check('the stand-in arch is hidden behind the loaded rift sprite',
+          drawStats.quad===0, 'arch curves drawn: '+drawStats.quad);
+  } else {
+    check('the stand-in arch still draws when the sprite never loads',
+          drawStats.quad>0, 'arch curves drawn: '+drawStats.quad);
+  }
+  // stage 3 before the boss: sealed, so the arch is the only thing marking
+  // the exit and has to be drawn either way
+  g.loadLevel(2);
+  step(2);
+  g.camX=900;
+  drawStats.quad=0;
+  g.drawPlatforms();
+  check('a sealed exit still shows the arch', drawStats.quad>0,
+        'arch curves drawn: '+drawStats.quad);
+  // ...and it gives way once the Alpha falls and the rift takes over
+  g.boss.dying=true; g.boss.deathTimer=0.02;
+  for(let i=0;i<10;i++){ g.player.invuln=999; step(1); if(g.boss.dead) break; }
+  g.camX=900;
+  drawStats.quad=0;
+  g.drawPlatforms();
+  if(FIRE_ONLOAD){
+    check('the arch gives way to the rift when the gate opens', drawStats.quad===0,
+          'arch curves drawn: '+drawStats.quad);
+  } else {
+    check('the fallback arch stays on as the open gate', drawStats.quad>0,
+          'arch curves drawn: '+drawStats.quad);
+  }
+}
+
+// ── scenario 9: death screen untouched ────────────────────────
+{
+  const {g,step}=run();
+  g.player.hp=1;
+  g.player.y=900;       // straight into the void
+  step(5);
+  check('falling out of the world still ends the run', g.STATE==='dead', g.STATE);
+  g.drawGameOver();
+  check('game-over screen renders', true);
+}
+
+} // ── end runSuite ────────────────────────────────────────────
+
+// ── driver: the same scenarios, sprites loaded and sprites absent ──
+let totalChecks=0, totalFailures=0;
+for(const fire of [true,false]){
+  FIRE_ONLOAD=fire; checks=0; failures=0;
+  console.log('=== '+path.basename(TARGET)+
+              '   (Image onload: '+(fire?'FIRES':'NEVER FIRES')+') ===');
+  runSuite();
+  console.log('--- '+(checks-failures)+'/'+checks+' checks passed ---\n');
+  totalChecks+=checks; totalFailures+=failures;
+}
+console.log(totalFailures
+  ? 'FAILED — '+totalFailures+' of '+totalChecks+' checks'
+  : 'OK — all '+totalChecks+' checks passed across both passes');
+process.exit(totalFailures?1:0);
