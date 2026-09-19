@@ -123,6 +123,9 @@ function run(opts){
   get laser(){return laser;},
   get lavaBalls(){return lavaBalls;},
   get shockwaves(){return shockwaves;},
+  get SPECIES(){return SPECIES;},
+  drawPtero:(e)=>drawPtero(e),
+  drawGroundEnemy:(e)=>drawGroundEnemy(e),
   get bossFlameBursts(){return bossFlameBursts;},
   drawShockwaves:()=>drawShockwaves(),
   get bossCardTimer(){return bossCardTimer;},
@@ -1363,6 +1366,195 @@ function runSuite(){
           vines.some(c=>c.dy>ledge.y && c.dy<ledge.y+60),
           vines.map(c=>c.dy).join(','));
   }
+}
+
+// ── scenario 37: the canopy's roster ─────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  step(3);
+  check('the canopy fields its own flyers',
+        g.enemies.length>0 && g.enemies.every(e=>e.species==='forest_flyer'),
+        g.enemies.map(e=>e.species).join(','));
+  const crawlers=g.groundEnemies.filter(e=>e.species==='forest_crawler');
+  const plants=g.groundEnemies.filter(e=>e.species==='forest_plant');
+  check('...crawlers on the ledges', crawlers.length>=2, crawlers.length);
+  check('...and spitters planted about', plants.length>=2, plants.length);
+  check('only the crawler carries armour',
+        crawlers.every(e=>e.shield===true) && plants.every(e=>!e.shield));
+  check('crawlers have four hit points', crawlers.every(e=>e.maxHp===4),
+        crawlers.map(e=>e.maxHp).join(','));
+  check('spitters have three', plants.every(e=>e.maxHp===3),
+        plants.map(e=>e.maxHp).join(','));
+  check('the dragonfly has two', g.enemies.every(e=>e.maxHp===2),
+        g.enemies.map(e=>e.maxHp).join(','));
+  check('every species names a sheet and a facing',
+        ['forest_flyer','forest_crawler','forest_plant','trike']
+          .every(k=>g.SPECIES[k]&&g.SPECIES[k].art&&Math.abs(g.SPECIES[k].faces)===1));
+  // a turret is planted, not patrolling
+  const plant=plants[0];
+  const px0=plant.x;
+  g.player.hp=99; g.player.invuln=999;
+  for(let i=0;i<60;i++){ g.player.invuln=999; step(1); }
+  check('a spitter never leaves its spot', Math.abs(plant.x-px0)<0.001,
+        px0+' -> '+plant.x);
+  g.drawPtero(g.enemies[0]);
+  g.drawGroundEnemy(crawlers[0]);
+  g.drawGroundEnemy(plant);
+  check('the canopy fauna renders', true);
+}
+
+// ── scenario 38: the dragonfly drips acid ────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const fly=g.enemies[0];
+  // silence everything else: the stage is full of spitters, and one of their
+  // spore balls was being measured as if the dragonfly had dropped it
+  for(const e of g.groundEnemies) e.dead=true;
+  for(let i=1;i<g.enemies.length;i++) g.enemies[i].dead=true;
+  g.lavaBalls.length=0;
+  // park it directly overhead and wait for the reload
+  for(let i=0;i<260 && g.lavaBalls.length===0;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=600; g.player.y=340; g.player.vy=0;
+    fly.x=g.player.x+53/2-fly.w/2; fly.y=180; fly.baseY=180;
+    step(1);
+  }
+  check('it drips acid when it gets overhead', g.lavaBalls.length>0,
+        g.lavaBalls.length);
+  check('the drip is acid, not a boss shot',
+        g.lavaBalls.every(b=>b.acid===true && !b.parry));
+  check('a drip falls straight down', Math.abs(g.lavaBalls[0].vx)<0.001,
+        g.lavaBalls[0].vx);
+  g.drawLavaBalls();
+  check('acid renders', true);
+}
+
+// ── scenario 39: the crawler's armour ────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const crawler=g.groundEnemies.filter(e=>e.species==='forest_crawler')[0];
+  for(const e of g.groundEnemies) if(e!==crawler) e.dead=true;
+  for(const e of g.enemies) e.dead=true;
+  const pin=(dir)=>{
+    // hold the crawler in the beam's path, walking in direction `dir`
+    crawler.vx=dir*40;
+    crawler.x=g.player.x+120;
+    crawler.y=g.player.y;
+    crawler.patrolMin=crawler.x-400; crawler.patrolMax=crawler.x+400;
+  };
+  g.player.facing=1;
+  keys({KeyF:true});
+
+  // facing the player = armoured. Shooting right at something walking left
+  // means you are in front of it.
+  crawler.hp=4;
+  for(let i=0;i<60;i++){ g.player.invuln=999; g.player.facing=1; pin(-1); step(1); }
+  check('the armour blocks a shot to the face', crawler.hp===4, crawler.hp);
+
+  // walking the same way you are shooting = you are behind it
+  for(let i=0;i<60;i++){ g.player.invuln=999; g.player.facing=1; pin(1); step(1); }
+  check('a shot to the back gets through', crawler.hp<4, crawler.hp);
+  keys({KeyF:false});
+}
+
+// ── scenario 40: stomping one ────────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  g.player.hp=99;
+  step(3);
+  const crawler=g.groundEnemies.filter(e=>e.species==='forest_crawler')[0];
+  for(const e of g.groundEnemies) if(e!==crawler) e.dead=true;
+  for(const e of g.enemies) e.dead=true;
+  crawler.hp=4; crawler.vx=0;
+  crawler.x=500; crawler.y=g.GROUND_Y-crawler.h;
+  crawler.patrolMin=400; crawler.patrolMax=600;
+  // drop onto its head
+  g.player.invuln=0;
+  g.player.x=crawler.x+crawler.w/2-26;
+  g.player.y=crawler.y-g.PLAYER_H+4;
+  g.player.vy=200;
+  for(let i=0;i<4 && !crawler.dying;i++){
+    crawler.x=500; crawler.y=g.GROUND_Y-crawler.h;
+    step(1);
+  }
+  check('dropping on its head kills it outright', crawler.dying===true, crawler.hp);
+  check('...and bounces you off it', g.player.vy<0, g.player.vy);
+  check('the stomp costs no health', g.player.hp===99, g.player.hp);
+}
+
+// ── scenario 41: the spitter ─────────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const plant=g.groundEnemies.filter(e=>e.species==='forest_plant')[0];
+  for(const e of g.groundEnemies) if(e!==plant) e.dead=true;
+  for(const e of g.enemies) e.dead=true;
+  g.lavaBalls.length=0;
+  // out of range: it holds fire
+  for(let i=0;i<120;i++){
+    g.player.invuln=999; g.player.x=plant.x+900; g.player.y=340;
+    step(1);
+  }
+  check('a spitter holds fire out of range', g.lavaBalls.length===0,
+        g.lavaBalls.length);
+  // in range: it lobs
+  for(let i=0;i<260 && g.lavaBalls.length===0;i++){
+    g.player.invuln=999; g.player.x=plant.x+180; g.player.y=340;
+    step(1);
+  }
+  check('a spitter lobs a spore ball in range', g.lavaBalls.length>0,
+        g.lavaBalls.length);
+  check('the lob is an arc, not a straight shot',
+        g.lavaBalls.some(b=>b.vy<0), g.lavaBalls.map(b=>b.vy.toFixed(0)).join(','));
+  // check tracking from BOTH sides — the player happened to be on the right
+  // here, so asserting faceDir===1 alone passes even when it is hardcoded
+  for(let i=0;i<5;i++){ g.player.invuln=999; g.player.x=plant.x+180; step(1); }
+  const fromRight=plant.faceDir;
+  for(let i=0;i<5;i++){ g.player.invuln=999; g.player.x=plant.x-180; step(1); }
+  const fromLeft=plant.faceDir;
+  check('it turns to face the player', fromRight===1 && fromLeft===-1,
+        'right='+fromRight+' left='+fromLeft);
+}
+
+// ── scenario 42: the triceratops hostage ─────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(3);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the canopy holds exactly one hostage',
+        g.LEVELS[3].cages.length===1, g.LEVELS[3].cages.length);
+  check('...and it is a triceratops', g.cages[0].species==='trike',
+        g.cages[0].species);
+  g.drawCages&&g.drawCages();
+  g.breakCage(g.cages[0]);
+  check('freeing it puts a trike on the train',
+        g.followers.length===1 && g.followers[0].species==='trike',
+        g.followers[0]&&g.followers[0].species);
+  check('it bounces with joy before settling', g.followers[0].joy>0,
+        g.followers[0].joy);
+  check('the stage tally reads one of one',
+        g.rescuedThisLevel===1 && g.LEVELS[3].cages.length===1,
+        g.rescuedThisLevel+'/'+g.LEVELS[3].cages.length);
+  for(let i=0;i<40;i++){ g.player.invuln=999; step(1); }
+  g.drawFollowers();
+  check('the trike renders in the train', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
