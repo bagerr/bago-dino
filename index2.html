@@ -243,6 +243,24 @@ function stopSiren(){
   }
 }
 
+// ─── PARRY ────────────────────────────────────────────────────
+// a bright metallic ring — it has to cut through the middle of a boss fight
+function playParry(){
+  if(!actx) return;
+  const now=actx.currentTime;
+  [1320,1980,2640].forEach((f,i)=>{
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type=i===0?"square":"triangle";
+    o.frequency.setValueAtTime(f,now);
+    o.frequency.exponentialRampToValueAtTime(f*1.35,now+0.07);
+    g.gain.setValueAtTime(0.0001,now);
+    g.gain.linearRampToValueAtTime(0.18/(i+1),now+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.32);
+    o.connect(g); g.connect(actx.destination);
+    o.start(now); o.stop(now+0.33);
+  });
+}
+
 // ─── CONTINUE COUNTDOWN TICK ──────────────────────────────────
 // one dry blip per second while the credit clock runs down
 function playContinueTick(urgent){
@@ -548,7 +566,8 @@ const LEVELS = [
     // on the approach instead of at the start of the stage
     checkpoint:1200, parTime:100,
     arena:{start:600,end:1100},
-    boss:{x:1450,triggerX:1380},
+    boss:{x:1450,triggerX:1380,hp:12,
+          name:"ALFA PTERODACTYL", title:"VOLKAN ÇEKİRDEĞİNİN BEKÇİSİ"},
   },
 ];
 
@@ -574,6 +593,9 @@ let arenaGoTimer=0;     // blinking "GO! →"
 // ─── BOSS INTRO (siren + WARNING! + descent) ──────────────────
 // only the final stage has a boss; on stages 1-2 the exit portal is already open
 let BOSS_TRIGGER_X=0, levelHasBoss=false;
+let bossCardTimer=0;   // the named intro card, Sunset Riders style
+let bossRageTimer=0;   // the "ÇILGINA DÖNDÜ" banner on the phase flip
+let parriesThisLevel=0;
 let bossIntroTriggered=false;
 let warningBannerTimer=0;
 let stageClearDelay=0; // counts down after the boss dies, then auto-wins
@@ -1473,13 +1495,16 @@ function initBoss(){
   boss = spec ? {
     type:"boss",
     x:spec.x, y:-160, baseY:170, w:BOSS_W, h:BOSS_H,
-    hp:12, maxHp:12,
+    hp:spec.hp||12, maxHp:spec.hp||12,
+    name:spec.name||"ALFA PTERODACTYL", title:spec.title||"",
+    phase:1,               // flips to 2 at half health — see enterBossPhase2
     wavePhase:rnd(0,Math.PI*2),
     fireCooldown:2.5,      // slow homing lava-ball attack
     flameCooldown:4,       // vertical flame-burst attack
     hitFlash:0, dying:false, deathTimer:0, dead:false, beamTick:0,
     introState:"pending", introTimer:0 // pending → warning → descending → active
   } : null;
+  bossCardTimer=0; bossRageTimer=0;
   gateOpen = !spec;
   // stages with no boss have the rift standing there from the start; on the
   // boss stage it has to be earned, so it materialises in killBoss()
@@ -1542,7 +1567,7 @@ function loadLevel(i){
   followers=[]; playerTrail=[]; rescuedThisLevel=0;
   scaredBabies=[]; babyShots=[];
   bestChainThisLevel=0;
-  hitsThisLevel=0; levelTime=0;
+  hitsThisLevel=0; levelTime=0; parriesThisLevel=0;
   checkpointX=L.checkpoint!==undefined?L.checkpoint:Infinity;
   checkpointUsed=false;
   warpTimer=0;   // portalReveal is set by initBoss(), which ran just above
@@ -2622,6 +2647,20 @@ function drawMagmaBursts(){
 function drawLavaBalls(){
   for(const lb of lavaBalls){
     const lx=lb.x-camX, ly=lb.y;
+    if(lb.parry){
+      // Cuphead's rule: if it is pink, you can hit it. A parryable shot
+      // pulses magenta and wears a ring so it never reads as ordinary fire.
+      const p=0.5+0.5*Math.sin(t*16);
+      glow("#ff2fb0",18+10*p);
+      ctx.fillStyle="#ff2fb0";
+      ctx.beginPath(); ctx.arc(lx,ly,10,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle="#ffd6f2";
+      ctx.beginPath(); ctx.arc(lx-2,ly-2,4,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=`rgba(255,120,220,${0.5+0.5*p})`; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(lx,ly,14+3*p,0,Math.PI*2); ctx.stroke();
+      noGlow();
+      continue;
+    }
     glow("#ff4400",16);
     ctx.fillStyle="#ff5500";
     ctx.beginPath(); ctx.arc(lx,ly,10,0,Math.PI*2); ctx.fill();
@@ -2680,6 +2719,15 @@ function drawBoss(){
 
   if(bossSpriteLoaded){
     ctx.drawImage(bossSprite,-boss.w/2,-boss.h/2,boss.w,boss.h);
+    if(boss.phase>=2){
+      // an enraged wash over the art, additive so it glows rather than muddies
+      ctx.save();
+      ctx.globalCompositeOperation="lighter";
+      ctx.globalAlpha=0.22+0.12*Math.sin(t*9);
+      ctx.fillStyle="#ff2244";
+      ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
+      ctx.restore();
+    }
   } else {
     ctx.fillStyle="#ff0000";
     ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
@@ -2694,8 +2742,9 @@ function drawBoss(){
     ctx.fillStyle= i<boss.hp ? "#ff3322" : "rgba(255,255,255,0.15)";
     ctx.fillRect(-hbW/2+i*segW+1,hbY+1,segW-2,8);
   }
-  ctx.fillStyle="#fff"; ctx.font="10px 'Courier New',monospace"; ctx.textAlign="center";
-  ctx.fillText("ALPHA PTERODACTYL",0,hbY-6);
+  ctx.fillStyle=boss.phase>=2?"#ff6677":"#fff";
+  ctx.font="10px 'Courier New',monospace"; ctx.textAlign="center";
+  ctx.fillText(boss.name+(boss.phase>=2?"  ⚠ FAZ 2":""),0,hbY-6);
   ctx.textAlign="left";
 
   ctx.restore();
@@ -2963,6 +3012,68 @@ function drawArenaBanners(){
   ctx.textAlign="left";
 }
 
+// ─── BOSS NAME CARD + RAGE BANNER ────────────────────────────
+// Sunset Riders announced its bosses by name. So does this one: the card
+// slides in from the left as the boss descends, holds, then slides out.
+function drawBossCard(){
+  if(bossCardTimer<=0||!boss) return;
+  const total=2.6;
+  const el=total-bossCardTimer;
+  // 0.35s in, 0.35s out, hold between
+  let slide=1;
+  if(el<0.35) slide=el/0.35;
+  else if(bossCardTimer<0.35) slide=bossCardTimer/0.35;
+  const ease=slide*slide*(3-2*slide);       // smoothstep
+  const cardW=430, cardH=74;
+  const cx=lerp(-cardW-20,W/2-cardW/2,ease);
+  const cy=H*0.62;
+
+  ctx.save();
+  ctx.globalAlpha=ease;
+  ctx.fillStyle="rgba(8,2,12,0.92)";
+  ctx.fillRect(cx,cy,cardW,cardH);
+  ctx.shadowColor="#ff2244"; ctx.shadowBlur=18;
+  ctx.strokeStyle="#ff3344"; ctx.lineWidth=2;
+  ctx.strokeRect(cx,cy,cardW,cardH);
+  noGlow();
+  // a red spine down the left edge
+  ctx.fillStyle="#ff2244";
+  ctx.fillRect(cx,cy,6,cardH);
+
+  ctx.textAlign="left";
+  glow("#ff3344",12);
+  ctx.font="bold 26px 'Courier New',monospace";
+  ctx.fillStyle="#ff5566";
+  ctx.fillText(boss.name,cx+20,cy+34);
+  noGlow();
+  if(boss.title){
+    ctx.font="bold 12px 'Courier New',monospace";
+    ctx.fillStyle="#ffaabb";
+    ctx.fillText(boss.title,cx+20,cy+56);
+  }
+  ctx.restore();
+  ctx.textAlign="left";
+}
+function drawBossRage(){
+  if(bossRageTimer<=0) return;
+  const pulse=0.5+0.5*Math.sin(t*18);
+  ctx.save();
+  ctx.globalAlpha=clamp(bossRageTimer/2.2,0,1);
+  ctx.fillStyle=`rgba(255,20,50,${0.10+0.10*pulse})`;
+  ctx.fillRect(0,0,W,H);
+  ctx.textAlign="center";
+  glow("#ff2244",18+14*pulse);
+  ctx.font="bold 34px 'Courier New',monospace";
+  ctx.fillStyle="#ff4455";
+  ctx.fillText("ÇILGINA DÖNDÜ!",W/2,H*0.24);
+  noGlow();
+  ctx.font="bold 14px 'Courier New',monospace";
+  ctx.fillStyle="#ffccd4";
+  ctx.fillText("PEMBE ATIŞLARI DASH İLE SAVUŞTUR",W/2,H*0.24+26);
+  ctx.restore();
+  ctx.textAlign="left";
+}
+
 // ─── SCREEN SHAKE ────────────────────────────────────────────
 let shakeX=0,shakeY=0;
 function applyShake(dt){
@@ -3055,7 +3166,8 @@ function drawMissionReport(){
   typeLine("TOPLAM SKOR: "+score.toLocaleString(),
            by+212,"bold 16px 'Courier New',monospace","#ffffff",0);
   typeLine("KOMBO BONUSU: +"+lastComboBonus.toLocaleString()+
-           "  (EN İYİ ZİNCİR: x"+bestChainThisLevel+")",
+           "  (EN İYİ ZİNCİR: x"+bestChainThisLevel+")"+
+           (parriesThisLevel?"  PARRY x"+parriesThisLevel:""),
            by+234,"bold 14px 'Courier New',monospace","#ff88cc",0);
   typeLine("KURTARMA BONUSU: +"+lastRescueBonus.toLocaleString()+
            (rescuedThisLevel>=total?"  ★ TAM KURTARMA ★":""),
@@ -3919,7 +4031,10 @@ function update(dt){
       if(boss.deathTimer<=0){ boss.dead=true; killBoss(); }
     } else if(boss.introState==="warning"){
       boss.introTimer-=dt;
-      if(boss.introTimer<=0){ boss.introState="descending"; boss.introTimer=1.3; }
+      if(boss.introTimer<=0){
+        boss.introState="descending"; boss.introTimer=1.3;
+        bossCardTimer=2.6;   // the name card rides in with the descent
+      }
     } else if(boss.introState==="descending"){
       boss.introTimer-=dt;
       const p=1-clamp(boss.introTimer/1.3,0,1);
@@ -3932,23 +4047,39 @@ function update(dt){
       // waits off-screen. A bare `else` here previously fell through and
       // ran the full fight AI from frame one, firing lava balls/flame
       // bursts at the player from off-screen before the boss ever appeared.
-      boss.wavePhase+=dt*2;
-      boss.baseY=170+Math.sin(t*1.2)*40;
+      // half health flips the fight over
+      if(boss.phase===1 && boss.hp<=boss.maxHp/2) enterBossPhase2();
+      const rage=boss.phase>=2;
+      boss.wavePhase+=dt*(rage?3.2:2);
+      boss.baseY=170+Math.sin(t*(rage?1.9:1.2))*(rage?58:40);
       boss.y=boss.baseY+Math.sin(Date.now()/220+boss.wavePhase)*8;
       if(boss.hitFlash>0) boss.hitFlash=Math.max(0,boss.hitFlash-dt);
 
       // attack 1: slow homing lava ball
-      boss.fireCooldown-=dt;
+      boss.fireCooldown-=dt*(rage?1.7:1);
       if(boss.fireCooldown<=0){
         boss.fireCooldown=rnd(2.2,3.4);
         const dx=(player.x+PLAYER_W/2)-boss.x, dy=(player.y+PLAYER_H/2)-boss.y;
         const dd=Math.hypot(dx,dy)||1;
-        lavaBalls.push({x:boss.x,y:boss.y,vx:(dx/dd)*160,vy:-140,life:0});
+        // every lava ball is parryable: slow, telegraphed, and the one thing
+        // in the fight that rewards standing your ground instead of running
+        lavaBalls.push({x:boss.x,y:boss.y,vx:(dx/dd)*160,vy:-140,life:0,parry:true});
+        // phase 2 spits a three-way fan instead of a single shot
+        if(boss.phase>=2){
+          for(const spread of [-0.42,0.42]){
+            const ca=Math.cos(spread), sa=Math.sin(spread);
+            lavaBalls.push({
+              x:boss.x, y:boss.y,
+              vx:((dx/dd)*ca-(-1)*sa)*160, vy:-140+sa*90,
+              life:0, parry:true
+            });
+          }
+        }
         playPew();
       }
 
       // attack 2: a downward vertical flame burst dropped beneath the boss
-      boss.flameCooldown-=dt;
+      boss.flameCooldown-=dt*(rage?1.8:1);
       if(boss.flameCooldown<=0){
         boss.flameCooldown=rnd(3.5,5);
         bossFlameBursts.push({x:boss.x,y:boss.y+boss.h/2,life:0,maxLife:1.1});
@@ -3980,7 +4111,17 @@ function update(dt){
     lb.x+=lb.vx*dt; lb.y+=lb.vy*dt;
     lb.life+=dt;
     if(lb.y>LAVA_Y||lb.life>6){ lavaBalls.splice(i,1); continue; }
-    if(player.invuln<=0 && Math.hypot((player.x+PLAYER_W/2)-lb.x,(player.y+PLAYER_H/2)-lb.y)<22){
+    const near=Math.hypot((player.x+PLAYER_W/2)-lb.x,(player.y+PLAYER_H/2)-lb.y)<26;
+    // PARRY — dash into a parryable shot and you swat it instead of eating it.
+    // Checked before the damage test, and deliberately not gated on invuln:
+    // the dash grants i-frames of its own, so gating it there would mean the
+    // parry could never fire.
+    if(near && lb.parry && player.dashTimer>0){
+      parryShot(lb);
+      lavaBalls.splice(i,1);
+      continue;
+    }
+    if(player.invuln<=0 && near){
       takeDamage("enemy");
       spawnParticles(lb.x-camX,lb.y,8,["#ff8800","#ffcc00","#ff4400"],
         {minSpd:60,maxSpd:180,minLife:0.2,maxLife:0.4,type:"circle",gravity:150});
@@ -4102,6 +4243,8 @@ function update(dt){
       }
     }
   }
+  if(bossCardTimer>0) bossCardTimer-=dt;
+  if(bossRageTimer>0) bossRageTimer-=dt;
   if(arenaBannerTimer>0) arenaBannerTimer-=dt;
   if(arenaGoTimer>0) arenaGoTimer-=dt;
   if(warningBannerTimer>0) warningBannerTimer-=dt;
@@ -4169,6 +4312,44 @@ function killEnemy(e){
   screenShake=Math.min(6,screenShake+(feverMode?6:4));
   hitStopTimer=Math.max(hitStopTimer,0.04);
   playExplosion();
+}
+
+// A parry is the skill move: no damage, a big chain jump, score, and a
+// freeze-frame. It is the only way to gain ground during the boss fight
+// rather than just surviving it.
+// The turn: the Alpha stops pacing itself, the shots come in threes, and the
+// screen says so. Everything it changes is read off boss.phase, so a
+// mini-boss can opt in by simply having the same field.
+function enterBossPhase2(){
+  boss.phase=2;
+  bossRageTimer=2.2;
+  boss.fireCooldown=Math.min(boss.fireCooldown,0.7);
+  hitStopTimer=Math.max(hitStopTimer,0.12);
+  screenShake=Math.min(6,screenShake+6);
+  bossShakeTimer=1.2;
+  feverFlash=Math.max(feverFlash,0.7);
+  startSiren(1.6);
+  playExplosion();
+  spawnParticles(boss.x-camX,boss.y,34,["#ff2244","#ff8800","#ffffff","#ff2fb0"],
+    {minSpd:120,maxSpd:360,minLife:0.4,maxLife:1.0,type:"square",gravity:120,minSz:3,maxSz:8});
+  queueRadio(null,"ACİL DURUM",
+    ["ALFA ÇILGINA DÖNDÜ!","Pembe atışları DASH ile savuşturabilirsin!"],
+    {color:"#ff2244",urgent:true,hold:3.6});
+}
+
+function parryShot(lb){
+  parriesThisLevel++;
+  playParry();
+  hitStopTimer=Math.max(hitStopTimer,0.09);
+  screenShake=Math.min(6,screenShake+5);
+  feverFlash=Math.max(feverFlash,0.8);
+  score+=300;
+  addChain(4);
+  player.jetFuel=Math.min(1,player.jetFuel+0.25);
+  player.dashCooldown=0;              // a clean parry refunds the dash
+  spawnFloatingText(lb.x-camX,lb.y-18,"PARRY! +300","#ff2fb0",18);
+  spawnParticles(lb.x-camX,lb.y,26,["#ff2fb0","#ffffff","#e879f9","#7dffcf"],
+    {minSpd:120,maxSpd:340,minLife:0.25,maxLife:0.6,type:"square",gravity:40,minSz:2,maxSz:6});
 }
 
 function killBoss(){
@@ -4394,6 +4575,8 @@ function loop(now){
 
   drawHUD();
   drawArenaBanners();
+  drawBossCard();
+  drawBossRage();
   if(STATE==="playing") drawRadio();
 
   if(STATE==="continue") drawContinue();

@@ -117,6 +117,15 @@ function run(){
   get weaponAmmo(){return weaponAmmo;}, set weaponAmmo(v){weaponAmmo=v;},
   get WEAPONS(){return WEAPONS;},
   get laser(){return laser;},
+  get lavaBalls(){return lavaBalls;},
+  get bossCardTimer(){return bossCardTimer;},
+  get bossRageTimer(){return bossRageTimer;},
+  get parriesThisLevel(){return parriesThisLevel;},
+  get chain(){return chain;},
+  drawBossCard:()=>drawBossCard(),
+  drawBossRage:()=>drawBossRage(),
+  drawLavaBalls:()=>drawLavaBalls(),
+  drawBoss:()=>drawBoss(),
   get playerBombs(){return playerBombs;},
   get weaponPickups(){return weaponPickups;},
   equipWeapon:(k)=>equipWeapon(k),
@@ -971,6 +980,105 @@ function runSuite(){
   check('the debrief counts only who boarded',
         g.rescuedThisLevel===aboard, 'aboard='+aboard+' loose='+loose+
         ' tally='+g.rescuedThisLevel);
+}
+
+// ── scenario 27: the parry ───────────────────────────────────
+{
+  const {g,step}=run();
+  g.player.hp=99;
+  step(5);
+  const putBall=(parry)=>{
+    g.lavaBalls.length=0;
+    g.lavaBalls.push({x:g.player.x+53/2, y:g.player.y+60/2, vx:0, vy:0, life:0, parry:parry});
+  };
+
+  // dashing into a pink shot swats it
+  g.player.vx=0; g.player.vy=0; g.player.invuln=0; g.player.dashTimer=0.4;
+  const hpBefore=g.player.hp, scoreBefore=g.score, chainBefore=g.chain;
+  putBall(true);
+  for(let i=0;i<4 && g.lavaBalls.length;i++){ g.player.dashTimer=0.4; step(1); }
+  check('a dash through a pink shot parries it', g.lavaBalls.length===0, g.lavaBalls.length);
+  check('a parry costs no health', g.player.hp===hpBefore, hpBefore+' -> '+g.player.hp);
+  check('a parry pays out score', g.score>scoreBefore, g.score-scoreBefore);
+  check('a parry jumps the chain', g.chain>chainBefore, chainBefore+' -> '+g.chain);
+  check('the debrief counts parries', g.parriesThisLevel===1, g.parriesThisLevel);
+  check('a clean parry refunds the dash', g.player.dashCooldown===0, g.player.dashCooldown);
+
+  // NOT dashing means you eat it. Note the parry above set hitStopTimer, and
+  // loop() skips update() entirely while that runs — so the freeze has to be
+  // burned off first or the next few steps simulate nothing at all.
+  step(12);
+  g.player.vx=0; g.player.vy=0; g.player.dashTimer=0; g.player.invuln=0;
+  const hp2=g.player.hp;
+  putBall(true);
+  for(let i=0;i<6 && g.player.hp===hp2;i++) step(1);
+  check('standing in a pink shot still hurts', g.player.hp<hp2, hp2+' -> '+g.player.hp);
+
+  // an ordinary shot is not parryable, dash or no dash
+  step(12);
+  g.player.vx=0; g.player.vy=0; g.player.dashTimer=0.4; g.player.invuln=0;
+  const parries=g.parriesThisLevel;
+  putBall(false);
+  for(let i=0;i<6;i++){ g.player.dashTimer=0.4; step(1); }
+  check('an ordinary shot cannot be parried', g.parriesThisLevel===parries,
+        g.parriesThisLevel);
+  g.drawLavaBalls();
+  check('parryable and ordinary shots both render', true);
+}
+
+// ── scenario 28: the Alpha's second phase ────────────────────
+{
+  const {g,step}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the boss is named from the level table',
+        g.boss.name==='ALFA PTERODACTYL', g.boss&&g.boss.name);
+  check('it starts in phase 1', g.boss.phase===1, g.boss.phase);
+
+  // drop it to half health with the fight live
+  g.boss.introState='active';
+  g.boss.hp=Math.floor(g.boss.maxHp/2);
+  for(let i=0;i<5;i++){ g.player.invuln=999; step(1); }
+  check('half health flips it into phase 2', g.boss.phase===2, g.boss.phase);
+  check('the rage banner comes up', g.bossRageTimer>0, g.bossRageTimer);
+  g.drawBossRage();
+  g.drawBoss();
+  check('the enraged boss and its banner render', true);
+
+  // phase 2 answers with a fan, not a single shot
+  g.lavaBalls.length=0;
+  g.boss.fireCooldown=0.01;
+  for(let i=0;i<8 && g.lavaBalls.length===0;i++){ g.player.invuln=999; step(1); }
+  check('phase 2 fires a three-way fan', g.lavaBalls.length>=3, g.lavaBalls.length);
+  check('every shot in the fan is parryable',
+        g.lavaBalls.every(b=>b.parry===true));
+}
+
+// ── scenario 29: the named intro card ────────────────────────
+{
+  const {g,step}=run();
+  g.loadLevel(2);
+  g.player.hp=99; g.player.invuln=999;
+  for(const e of g.enemies) if(e.arenaEnemy) e.dead=true;
+  for(const e of g.groundEnemies) if(e.arenaEnemy) e.dead=true;
+  check('no card before the fight', g.bossCardTimer===0, g.bossCardTimer);
+  // walk onto the trigger and let the warning run through to the descent
+  for(let i=0;i<500 && g.bossCardTimer<=0;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=Math.min(1400,g.player.x+6);
+    g.player.y=140; g.player.vy=0;
+    step(1);
+  }
+  check('the card rides in with the descent', g.bossCardTimer>0, g.bossCardTimer);
+  check('...which is when the boss is actually descending',
+        g.boss.introState==='descending'||g.boss.introState==='active',
+        g.boss&&g.boss.introState);
+  g.drawBossCard();
+  check('the name card renders', true);
+  // and it clears itself
+  for(let i=0;i<200 && g.bossCardTimer>0;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('the card clears itself', g.bossCardTimer<=0, g.bossCardTimer);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
