@@ -243,6 +243,21 @@ function stopSiren(){
   }
 }
 
+// ─── CONTINUE COUNTDOWN TICK ──────────────────────────────────
+// one dry blip per second while the credit clock runs down
+function playContinueTick(urgent){
+  if(!actx) return;
+  const now=actx.currentTime;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.type="square";
+  o.frequency.setValueAtTime(urgent?880:520,now);
+  g.gain.setValueAtTime(0.0001,now);
+  g.gain.linearRampToValueAtTime(urgent?0.20:0.13,now+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+0.14);
+  o.connect(g); g.connect(actx.destination);
+  o.start(now); o.stop(now+0.15);
+}
+
 // ─── HATCHLING SFX ────────────────────────────────────────────
 // a frightened upward chirp when one is knocked off the train
 function playBabyPanic(){
@@ -437,6 +452,7 @@ const LEVELS = [
     // three captives per stage — the debrief tallies X / 3
     cages:[{x:240,y:318},{x:640,y:238},{x:960,y:278}],
     escapeLine:"EMBER PATH TAHLİYE EDİLDİ",
+    checkpoint:620, parTime:60,
     arena:null,
     boss:null,
   },
@@ -480,6 +496,8 @@ const LEVELS = [
     weapons:[{x:720,y:200,kind:"sulfur"},{x:1350,y:300,kind:"magma"}],
     cages:[{x:205,y:308},{x:960,y:268},{x:1180,y:218}],
     escapeLine:"MAGMA KÖPRÜSÜ GERİDE BIRAKILDI",
+    // past the arena band: dying to the wave should not replay the run-up
+    checkpoint:1260, parTime:80,
     arena:{start:700,end:1150},
     boss:null,
   },
@@ -526,6 +544,9 @@ const LEVELS = [
     weapons:[{x:690,y:190,kind:"sulfur"},{x:1460,y:255,kind:"magma"}],
     cages:[{x:480,y:258},{x:880,y:268},{x:1150,y:228}],
     escapeLine:"VOLKAN ÇEKİRDEĞİNDEN KAÇILDI",
+    // past the arena, short of BOSS_TRIGGER_X — a death to the Alpha resumes
+    // on the approach instead of at the start of the stage
+    checkpoint:1200, parTime:100,
     arena:{start:600,end:1100},
     boss:{x:1450,triggerX:1380},
   },
@@ -556,6 +577,53 @@ let BOSS_TRIGGER_X=0, levelHasBoss=false;
 let bossIntroTriggered=false;
 let warningBannerTimer=0;
 let stageClearDelay=0; // counts down after the boss dies, then auto-wins
+
+// ─── CONTINUES, CHECKPOINT, GRADE ─────────────────────────────
+// The single biggest reason to close the tab was dying six minutes in and
+// being sent back to stage 1. A continue costs one of three credits and
+// resumes at the stage's checkpoint if it was reached.
+const MAX_CONTINUES=3;
+const CONTINUE_SECONDS=10;
+let continuesLeft=MAX_CONTINUES;
+let continueTimer=0;
+let continueTickAt=0;          // last whole second announced, for the beep
+
+let checkpointX=Infinity;      // world x of this stage's checkpoint
+let checkpointUsed=false;      // has it been passed this attempt?
+
+// graded per stage, best kept in localStorage
+let hitsThisLevel=0;
+let levelTime=0;
+let lastGrade="", lastGradeScore=0, lastGradeIsBest=false;
+const GRADE_ORDER=["D","C","B","A","S"];
+const GRADE_COLOR={S:"#ffee44",A:"#8effc9",B:"#7aa8ff",C:"#ffaa55",D:"#ff6677"};
+let bestGrades={};
+try{ bestGrades=JSON.parse(localStorage.getItem("neonDinoGrades")||"{}")||{}; }
+catch(e){ bestGrades={}; }
+
+// 40 points for the brood, 25 for the combo, 20 for taking no hits, 15 for
+// beating par. Rescue is weighted hardest because that is the mission.
+function computeGrade(){
+  const L=LEVELS[levelIndex];
+  const total=L.cages.length;
+  const par=L.parTime||80;
+  let pts=0;
+  pts+=40*(total?rescuedThisLevel/total:1);
+  pts+=25*Math.min(1,bestChainThisLevel/12);
+  pts+=Math.max(0,20-hitsThisLevel*7);
+  pts+=15*clamp(1-(levelTime-par)/par,0,1);
+  const letter = pts>=90?"S" : pts>=75?"A" : pts>=60?"B" : pts>=40?"C" : "D";
+  return {letter, pts:Math.round(pts)};
+}
+function recordGrade(letter){
+  const prev=bestGrades[levelIndex];
+  if(!prev || GRADE_ORDER.indexOf(letter)>GRADE_ORDER.indexOf(prev)){
+    bestGrades[levelIndex]=letter;
+    try{ localStorage.setItem("neonDinoGrades",JSON.stringify(bestGrades)); }catch(e){}
+    return true;
+  }
+  return false;
+}
 
 // ─── STAGE PROGRESSION ────────────────────────────────────────
 // Reaching the evacuation portal blacks the screen out into a mission
@@ -1440,6 +1508,9 @@ function loadLevel(i){
   followers=[]; playerTrail=[]; rescuedThisLevel=0;
   scaredBabies=[]; babyShots=[];
   bestChainThisLevel=0;
+  hitsThisLevel=0; levelTime=0;
+  checkpointX=L.checkpoint!==undefined?L.checkpoint:Infinity;
+  checkpointUsed=false;
   warpTimer=0;   // portalReveal is set by initBoss(), which ran just above
   recordPlayerTrail();
   queueRadio("start","KOMUTA MERKEZİ",
@@ -1459,7 +1530,7 @@ let screenShake = 0;
 let hitStopTimer = 0; // brief real-time freeze applied on impactful hits
 
 // ─── GAME STATE ───────────────────────────────────────────────
-let STATE = "playing"; // playing | warp | report | dead | win
+let STATE = "playing"; // playing | warp | report | continue | dead | win
 let stateTimer = 0;
 let goalReached = false;
 let lavaSurface = [];
@@ -1762,6 +1833,50 @@ function drawPlatforms(){
       }
     }
   }
+}
+
+// ─── CHECKPOINT BEACON ───────────────────────────────────────
+// A pylon standing on the ground line at the stage's checkpoint: dim and
+// grey before it is passed, a lit neon column afterwards.
+function drawCheckpoint(){
+  if(!isFinite(checkpointX)) return;
+  const cx=checkpointX-camX;
+  if(cx<-60||cx>W+60) return;
+  const baseY=GROUND_Y;
+  const lit=checkpointUsed;
+  const col=lit?"#7dffcf":"#4a4452";
+  // post
+  ctx.fillStyle="#1a1620";
+  ctx.fillRect(cx-4,baseY-64,8,64);
+  ctx.fillStyle=col;
+  ctx.fillRect(cx-3,baseY-62,6,60);
+  // lamp
+  glow(col,lit?18:6);
+  ctx.fillStyle=lit?"#aaffdd":"#5a5462";
+  ctx.beginPath(); ctx.arc(cx,baseY-70,7,0,Math.PI*2); ctx.fill();
+  noGlow();
+  if(lit){
+    // a soft column of light and a slow rising mote or two
+    ctx.save();
+    ctx.globalCompositeOperation="lighter";
+    const lg=ctx.createLinearGradient(0,baseY-150,0,baseY);
+    lg.addColorStop(0,"rgba(125,255,207,0)");
+    lg.addColorStop(1,`rgba(125,255,207,${0.16+0.05*Math.sin(t*3)})`);
+    ctx.fillStyle=lg;
+    ctx.fillRect(cx-16,baseY-150,32,150);
+    ctx.restore();
+    if(Math.random()<0.25) particles.push({
+      x:cx+rnd(-10,10), y:baseY-rnd(0,20),
+      vx:rnd(-8,8), vy:-rnd(20,55),
+      life:1, maxLife:rnd(0.6,1.2),
+      color:"#7dffcf", size:rnd(1,3), type:"square", gravity:0
+    });
+  }
+  ctx.textAlign="center";
+  ctx.font="bold 9px 'Courier New',monospace";
+  ctx.fillStyle=lit?"#7dffcf":"#6a6478";
+  ctx.fillText(lit?"KAYDEDİLDİ":"KONTROL",cx,baseY-82);
+  ctx.textAlign="left";
 }
 
 // ─── DRAW THE EVACUATION PORTAL ──────────────────────────────
@@ -2548,6 +2663,23 @@ function drawHUD(){
     ctx.fillText(i<player.hp?"❤️":"🖤",14+i*28,30);
   }
 
+  // remaining credits, sitting just right of the hearts
+  {
+    const hx=14+player.maxHp*28+6;
+    ctx.font="bold 12px 'Courier New',monospace";
+    ctx.fillStyle=continuesLeft>0?"#8effc9":"#ff5577";
+    ctx.fillText("CR",hx,26);
+    for(let i=0;i<MAX_CONTINUES;i++){
+      const on=i<continuesLeft;
+      ctx.fillStyle=on?"#8effc9":"rgba(140,160,170,0.30)";
+      if(on){ glow("#8effc9",6); }
+      ctx.beginPath();
+      ctx.arc(hx+26+i*13,22,4.5,0,Math.PI*2);
+      ctx.fill();
+      noGlow();
+    }
+  }
+
   // chain/fever box (top-right) — neon purple/pink framed panel
   const pad=12;
   const bw=260,bh=feverMode?144:120,bx=W-bw-8,by=8;
@@ -2858,6 +2990,26 @@ function drawMissionReport(){
              by+286,"bold 18px 'Courier New',monospace","#e879f9",10);
   }
 
+  // the grade sits in the panel's top-right corner, outside the typed lines,
+  // so adding or rewording a line never has to move it
+  if(reportTimer>0.5){
+    const gx2=bx+bw-62, gy2=by+52;
+    const gp=0.6+0.4*Math.sin(t*7);
+    glow(GRADE_COLOR[lastGrade]||"#ffffff",14+10*gp);
+    ctx.font="bold 58px 'Courier New',monospace";
+    ctx.fillStyle=GRADE_COLOR[lastGrade]||"#ffffff";
+    ctx.fillText(lastGrade||"-",gx2,gy2);
+    noGlow();
+    ctx.font="bold 10px 'Courier New',monospace";
+    ctx.fillStyle="#aaaacc";
+    ctx.fillText("DERECE  "+lastGradeScore,gx2,gy2+16);
+    const best=bestGrades[levelIndex];
+    if(best){
+      ctx.fillStyle=lastGradeIsBest?"#ffee44":"#8899aa";
+      ctx.fillText(lastGradeIsBest?"★ YENİ REKOR":"EN İYİ: "+best,gx2,gy2+30);
+    }
+  }
+
   // publish the finish time so update() can stop the typewriter clacks
   reportTypeEnd=cursorAt;
 
@@ -2866,6 +3018,44 @@ function drawMissionReport(){
     ctx.font="bold 13px 'Courier New',monospace";
     ctx.fillStyle="#88ccaa";
     ctx.fillText("DEVAM ETMEK İÇİN  [ENTER]",W/2,by+bh+28);
+  }
+  ctx.textAlign="left";
+}
+
+// ─── CONTINUE? ───────────────────────────────────────────────
+function drawContinue(){
+  ctx.fillStyle="rgba(0,0,0,0.80)"; ctx.fillRect(0,0,W,H);
+  ctx.textAlign="center";
+  const secs=Math.max(0,Math.ceil(continueTimer));
+  const urgent=secs<=3;
+  const pulse=0.6+0.4*Math.sin(t*(urgent?14:7));
+
+  glow(urgent?"#ff2244":"#ffaa33",16+12*pulse);
+  ctx.font="bold 36px 'Courier New',monospace";
+  ctx.fillStyle=urgent?"#ff4466":"#ffcc55";
+  ctx.fillText("DEVAM ET?",W/2,H/2-86);
+  noGlow();
+
+  // the number, big and getting angrier
+  glow(urgent?"#ff2244":"#ffee44",24+18*pulse);
+  ctx.font=`bold ${72+(urgent?10*pulse:0)}px 'Courier New',monospace`;
+  ctx.fillStyle=urgent?"#ff5577":"#ffee66";
+  ctx.fillText(String(secs),W/2,H/2+4);
+  noGlow();
+
+  ctx.font="bold 15px 'Courier New',monospace";
+  ctx.fillStyle="#aaffdd";
+  ctx.fillText(`KALAN DEVAM HAKKI: ${continuesLeft}`,W/2,H/2+42);
+
+  ctx.font="13px 'Courier New',monospace";
+  ctx.fillStyle="#88ccaa";
+  ctx.fillText(checkpointUsed?"KONTROL NOKTASINDAN DEVAM EDİLECEK"
+                             :"BÖLÜM BAŞINDAN DEVAM EDİLECEK",W/2,H/2+66);
+
+  if(Math.sin(t*6)>-0.3){
+    ctx.font="bold 14px 'Courier New',monospace";
+    ctx.fillStyle="#ffffff";
+    ctx.fillText("[ENTER] DEVAM     [R] BAŞTAN BAŞLA",W/2,H/2+100);
   }
   ctx.textAlign="left";
 }
@@ -2951,6 +3141,22 @@ function update(dt){
   if(STATE==="dead"||STATE==="win"){
     stateTimer+=dt;
     if(K["KeyR"]&&stateTimer>0.5) restartGame();
+    return;
+  }
+  // credit clock: ENTER spends one, R gives up, zero means it is really over
+  if(STATE==="continue"){
+    stateTimer+=dt;
+    continueTimer-=dt;
+    updateParticles(dt);
+    updateFloatingTexts(dt);
+    const secs=Math.ceil(Math.max(0,continueTimer));
+    if(secs<continueTickAt){ continueTickAt=secs; playContinueTick(secs<=3); }
+    if(K["Enter"] && stateTimer>0.3){ useContinue(); return; }
+    if(K["KeyR"] && stateTimer>0.5){ restartGame(); return; }
+    if(continueTimer<=0){
+      STATE="dead"; stateTimer=0;
+      newRecord=saveHiScoreIfNeeded();
+    }
     return;
   }
   // being drunk by the rift: gameplay is over, but the scene keeps animating
@@ -3524,6 +3730,21 @@ function update(dt){
   // (the ceiling no longer drips — it's plain dark rock now, so the lava-drip
   // emitters that belonged to the old lava_ceiling band are gone with it)
 
+  // ── mid-stage checkpoint ──
+  levelTime+=dt;
+  if(!checkpointUsed && player.x+PLAYER_W/2>=checkpointX){
+    checkpointUsed=true;
+    playPowerUp();
+    screenShake=Math.min(6,screenShake+3);
+    spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-26,"KONTROL NOKTASI","#7dffcf",15);
+    spawnParticles(player.x+PLAYER_W/2-camX,player.y+PLAYER_H/2,18,
+      ["#7dffcf","#aaffdd","#ffffff"],
+      {minSpd:60,maxSpd:220,upBias:60,minLife:0.3,maxLife:0.8,type:"square",gravity:-20});
+    queueRadio("checkpoint","KOMUTA MERKEZİ",
+      ["Konumun kaydedildi.","Düşersen buradan devam edersin."],
+      {color:"#7dffcf",hold:3.0});
+  }
+
   // ── the evacuation portal ──
   if(gateOpen && portalReveal<1) portalReveal=Math.min(1,portalReveal+dt/0.9);
   if(gateOpen && !goalReached){
@@ -3897,10 +4118,45 @@ function takeDamage(reason){
     // connects to them — reset it or the hatchlings whip across the stage
     snapFollowersToPlayer();
   }
+  hitsThisLevel++;
   if(player.hp<=0){
-    STATE="dead";
-    newRecord=saveHiScoreIfNeeded();
+    stopLaserSound(); player.wasFiring=false;
+    if(continuesLeft>0){
+      // the arcade moment: ten seconds to decide, not an instant wipe
+      STATE="continue"; stateTimer=0;
+      continueTimer=CONTINUE_SECONDS;
+      continueTickAt=Math.ceil(CONTINUE_SECONDS);
+    } else {
+      STATE="dead"; stateTimer=0;
+      newRecord=saveHiScoreIfNeeded();
+    }
   }
+}
+
+// Spend a credit. The stage is rebuilt from scratch — half-restored entity
+// state is where respawn bugs live — and the player is then placed at the
+// checkpoint if they had reached it.
+function useContinue(){
+  continuesLeft--;
+  const resumeAt = checkpointUsed ? LEVELS[levelIndex].checkpoint : null;
+  player.hp=player.maxHp;
+  player.activePower=null; player.shieldCharge=false;
+  player.dashTimer=0; player.dashCooldown=0;
+  chain=0; chainTimer=0; feverMode=false; feverFlash=0;
+  screenShake=0; bossShakeTimer=0; hitStopTimer=0;
+  loadLevel(levelIndex);
+  if(resumeAt!==null && isFinite(resumeAt)){
+    checkpointUsed=true;              // loadLevel disarmed it; it stays earned
+    player.x=resumeAt; player.y=300; player.vx=0; player.vy=0;
+    camX=clamp(resumeAt-W*0.33,0,Math.max(0,levelWidth-W));
+    snapFollowersToPlayer();
+    queueRadio("resume","KOMUTA MERKEZİ",
+      ["Kontrol noktasından devam.","Soyu kurtarmaya geri dön!"],
+      {color:"#7dffcf",urgent:true,hold:3.0});
+  }
+  player.invuln=2.5;
+  STATE="playing"; stateTimer=0;
+  playPowerUp();
 }
 
 // Reaching the evacuation portal. Every stage now routes through the same
@@ -3935,6 +4191,10 @@ function endLevel(){
     {minSpd:100,maxSpd:300,minLife:0.5,maxLife:1.2,type:"square",gravity:80,minSz:3,maxSz:8});
   playPowerUp();
 
+  const grade=computeGrade();
+  lastGrade=grade.letter; lastGradeScore=grade.pts;
+  lastGradeIsBest=recordGrade(grade.letter);
+
   // the final stage's score is locked in here, before the debrief plays, so
   // the victory screen never re-runs the high-score check
   if(levelIndex>=LEVELS.length-1) newRecord=saveHiScoreIfNeeded();
@@ -3949,6 +4209,7 @@ function restartGame(){
   stopLaserSound(); stopSiren(); player.wasFiring=false;
   STATE="playing"; stateTimer=0; reportTimer=0;
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
+  continuesLeft=MAX_CONTINUES; continueTimer=0;
   screenShake=0; bossShakeTimer=0;
   loadLevel(0);  // back to stage 1 — also resets position, camera and all entities
 }
@@ -3979,6 +4240,7 @@ function loop(now){
   drawLava();
   drawMagmaBursts();
   drawPlatforms();
+  drawCheckpoint();
   drawCrystals();
   drawPowerUpBoxes();
   drawWeaponPickups();
@@ -4010,6 +4272,7 @@ function loop(now){
   drawArenaBanners();
   if(STATE==="playing") drawRadio();
 
+  if(STATE==="continue") drawContinue();
   if(STATE==="report") drawMissionReport();
   if(STATE==="dead") drawGameOver();
   if(STATE==="win")  drawWin();

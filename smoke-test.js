@@ -109,6 +109,19 @@ function run(){
   get followers(){return followers;}, get playerTrail(){return playerTrail;},
   get scaredBabies(){return scaredBabies;}, get babyShots(){return babyShots;},
   get PANIC_SECONDS(){return PANIC_SECONDS;},
+  get continuesLeft(){return continuesLeft;}, set continuesLeft(v){continuesLeft=v;},
+  get continueTimer(){return continueTimer;}, set continueTimer(v){continueTimer=v;},
+  get MAX_CONTINUES(){return MAX_CONTINUES;},
+  get checkpointX(){return checkpointX;},
+  get checkpointUsed(){return checkpointUsed;},
+  get hitsThisLevel(){return hitsThisLevel;}, set hitsThisLevel(v){hitsThisLevel=v;},
+  get levelTime(){return levelTime;}, set levelTime(v){levelTime=v;},
+  get lastGrade(){return lastGrade;}, get lastGradeScore(){return lastGradeScore;},
+  get bestGrades(){return bestGrades;},
+  computeGrade:()=>computeGrade(),
+  useContinue:()=>useContinue(),
+  drawContinue:()=>drawContinue(),
+  drawCheckpoint:()=>drawCheckpoint(),
   followerPower:()=>followerPower(),
   drawScaredBabies:()=>drawScaredBabies(),
   get rescuedThisLevel(){return rescuedThisLevel;},
@@ -434,6 +447,114 @@ function runSuite(){
   check('ENTER still dismisses the card', g.STATE==='playing', g.STATE);
 }
 
+// ── scenario 19: continues ────────────────────────────────────
+{
+  const {g,step,keys}=run();
+  step(5);
+  check('a run starts with a full credit sheet',
+        g.continuesLeft===g.MAX_CONTINUES, g.continuesLeft);
+  g.player.hp=1; g.player.y=900;          // straight into the void
+  step(4);
+  check('dying offers a continue instead of wiping the run',
+        g.STATE==='continue', g.STATE);
+  check('the countdown starts running', g.continueTimer>0 && g.continueTimer<=10,
+        g.continueTimer);
+  // ENTER spends one and puts you back in play
+  const before=g.continuesLeft;
+  keys({Enter:true});
+  step(40);
+  keys({Enter:false});
+  check('ENTER spends a credit and resumes', g.STATE==='playing', g.STATE);
+  check('the credit is actually deducted', g.continuesLeft===before-1,
+        before+' -> '+g.continuesLeft);
+  check('you come back on full health', g.player.hp===g.player.maxHp, g.player.hp);
+  check('...and briefly invulnerable', g.player.invuln>0, g.player.invuln);
+}
+
+// ── scenario 20: letting the countdown run out ───────────────
+{
+  const {g,step}=run();
+  step(5);
+  g.player.hp=1; g.player.y=900;
+  step(4);
+  check('the prompt is up', g.STATE==='continue', g.STATE);
+  for(let i=0;i<700 && g.STATE==='continue';i++) step(1);
+  check('ignoring the countdown ends the run', g.STATE==='dead', g.STATE);
+  check('an ignored credit is not spent', g.continuesLeft===g.MAX_CONTINUES,
+        g.continuesLeft);
+}
+
+// ── scenario 21: the mid-stage checkpoint ────────────────────
+{
+  const {g,step,keys}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  check('stage 1 has a checkpoint out in the level',
+        g.checkpointX>100 && g.checkpointX<1300, g.checkpointX);
+  check('it starts disarmed', g.checkpointUsed===false);
+  g.drawCheckpoint();
+  check('the unlit beacon renders', true);
+  // fly past it
+  for(let i=0;i<400 && !g.checkpointUsed;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=Math.min(g.checkpointX+40,g.player.x+6);
+    g.player.y=140; g.player.vy=0;
+    step(1);
+  }
+  check('crossing the line arms the checkpoint', g.checkpointUsed===true);
+  check('it announces itself on the radio', !!g.radioFired.checkpoint);
+  g.drawCheckpoint();
+  check('the lit beacon renders', true);
+  // now die and continue — you must come back at the checkpoint, not at 60
+  g.player.invuln=0; g.player.hp=1; g.player.y=900;
+  step(4);
+  check('death still offers the credit', g.STATE==='continue', g.STATE);
+  keys({Enter:true}); step(30); keys({Enter:false});
+  check('the continue resumes at the checkpoint, not the stage start',
+        Math.abs(g.player.x-g.checkpointX)<160 && g.player.x>300,
+        'x='+g.player.x.toFixed(0)+' cp='+g.checkpointX);
+  check('the checkpoint stays earned across the continue', g.checkpointUsed===true);
+  check('the camera follows it in', g.camX>100, g.camX);
+  check('the stage is still stage 1', g.levelIndex===0);
+}
+
+// ── scenario 22: the stage grade ─────────────────────────────
+{
+  const {g,step}=run();
+  g.player.hp=99; g.player.invuln=999;
+  step(5);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  // a bad run: nothing rescued, no chain, plenty of hits, slow
+  g.hitsThisLevel=3; g.levelTime=400;
+  let gr=g.computeGrade();
+  check('a bad run grades bottom', gr.letter==='D', gr.letter+' ('+gr.pts+')');
+
+  // Hold everything else equal and vary ONLY the rescue count. Asserting on
+  // the letter alone is too loose — a build that handed out full rescue
+  // points for zero rescues still landed inside a "D or C" window.
+  g.hitsThisLevel=0; g.levelTime=10;
+  const none=g.computeGrade();
+  check('a clean but empty-handed run cannot reach the top', none.letter!=='S',
+        none.letter+' ('+none.pts+')');
+  g.breakCage(g.cages[0]); g.breakCage(g.cages[0]); g.breakCage(g.cages[0]);
+  const full=g.computeGrade();
+  check('rescuing the brood is what moves the grade most',
+        full.pts-none.pts>=35, none.pts+' -> '+full.pts);
+
+  // a clean run: whole brood, big chain, untouched, under par
+  g.addChain(12);
+  gr=g.computeGrade();
+  check('a clean run grades top', gr.letter==='S', gr.letter+' ('+gr.pts+')');
+  check('the grade is bounded', gr.pts<=100 && gr.pts>=0, gr.pts);
+  // the portal records it, and the best is kept
+  g.endLevel();
+  check('the debrief carries the grade', g.lastGrade==='S', g.lastGrade);
+  check('a first grade is a personal best', g.bestGrades[0]==='S', JSON.stringify(g.bestGrades));
+  g.drawMissionReport();
+  check('the graded debrief renders', true);
+}
+
 // ── scenario 12: walking into the rift (stage with no boss) ───
 {
   const {g,step}=run();
@@ -736,7 +857,14 @@ function runSuite(){
   g.player.hp=1;
   g.player.y=900;       // straight into the void
   step(5);
-  check('falling out of the world still ends the run', g.STATE==='dead', g.STATE);
+  check('falling out of the world costs the last heart', g.STATE==='continue', g.STATE);
+  g.drawContinue();
+  check('the continue prompt renders', true);
+  // with no credits left it really is over
+  g.continuesLeft=0;
+  g.continueTimer=0.01;
+  step(5);
+  check('a spent credit sheet ends the run for real', g.STATE==='dead', g.STATE);
   g.drawGameOver();
   check('game-over screen renders', true);
 }
