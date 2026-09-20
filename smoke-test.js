@@ -2174,12 +2174,15 @@ function runSuite(){
 // ── scenario 58: Frozen Peaks joins the map ──────────────────
 {
   const {g,step}=run({map:true});
-  check('frozen peaks owns a ridge and a summit', g.WORLDS[2].levels.length===2,
-        g.WORLDS[2].levels.join(','));
+  const peaks=g.WORLDS[2].levels;
+  check('frozen peaks is three stages deep', peaks.length===3, peaks.join(','));
+  check('...all of them ice',
+        peaks.every(i=>g.LEVELS[i].theme==='ice'),
+        peaks.map(i=>g.LEVELS[i].theme).join(','));
   check('...and the Titan is the LAST of them, not the first',
-        g.LEVELS[g.WORLDS[2].levels[1]].boss!==null &&
-        g.LEVELS[g.WORLDS[2].levels[0]].boss===null,
-        g.WORLDS[2].levels.join(','));
+        g.LEVELS[peaks[peaks.length-1]].boss!==null &&
+        peaks.slice(0,-1).every(i=>g.LEVELS[i].boss===null),
+        peaks.map(i=>g.LEVELS[i].boss?'boss':'-').join(','));
   check('it is still locked at the start', g.worldState(2).unlocked===false);
   // clearing the canopy is what opens it
   g.startWorld(0); g.finishWorld();        // volcano
@@ -3350,6 +3353,126 @@ function runSuite(){
     step(1); back++;
   }
   check('the pond freezes back over', pond.gone===false, back);
+}
+
+// ── scenario 85: Crevasse Run ───────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(8);
+  const L=g.LEVELS[8];
+  check('the peaks gained a middle stage', L.name==='CREVASSE RUN', L.name);
+  check('...on ice, with no boss', L.theme==='ice' && L.boss===null);
+  check('...and its own weather', !!L.wind, JSON.stringify(L.wind||null));
+  check('the wind here is gentler than the ridge that taught it',
+        L.wind.speed<g.LEVELS[7].wind.speed,
+        L.wind.speed+' vs '+g.LEVELS[7].wind.speed);
+
+  // The whole point of the stage: the long pit is floored by nothing but
+  // ponds, and they have to meet edge to edge or there is a hole you cannot
+  // see coming.
+  const crevasse=L.lavaPits.reduce((a,b)=>a.w>b.w?a:b);
+  const ponds=L.platforms.filter(p=>p.crack).sort((a,b)=>a.x-b.x);
+  check('the crevasse is bridged by ponds alone', ponds.length>=3, ponds.length);
+  check('...starting exactly at its near edge', ponds[0].x===crevasse.x,
+        ponds[0].x+' vs '+crevasse.x);
+  check('...ending exactly at its far edge',
+        ponds[ponds.length-1].x+ponds[ponds.length-1].w===crevasse.x+crevasse.w,
+        (ponds[ponds.length-1].x+ponds[ponds.length-1].w)+' vs '+(crevasse.x+crevasse.w));
+  let gap='';
+  for(let i=1;i<ponds.length;i++){
+    if(ponds[i].x!==ponds[i-1].x+ponds[i-1].w)
+      gap+=' '+(ponds[i-1].x+ponds[i-1].w)+'->'+ponds[i].x;
+  }
+  check('...with no hole between them', gap==='', gap||'flush');
+  check('and nothing else is holding you up out there',
+        !L.platforms.some(p=>!p.crack && !p.lavaPit && p.y>=g.GROUND_Y &&
+                             p.x<crevasse.x+crevasse.w && p.x+p.w>crevasse.x),
+        'clear');
+
+  // each pond keeps its own fuse — crossing one must not doom the next
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+  g.windState='calm'; g.windTimer=999;
+  const live=g.platforms.filter(p=>p.crack).sort((a,b)=>a.x-b.x);
+  for(let i=0;i<3;i++){
+    g.player.x=live[0].x+live[0].w/2-g.PLAYER_W/2;
+    g.player.y=live[0].y-g.PLAYER_H;
+    g.player.vx=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('standing on one pond cracks that pond', live[0].crumbleT!==undefined,
+        live[0].crumbleT);
+  check('...and leaves the next ones alone',
+        live.slice(1).every(p=>p.crumbleT===undefined),
+        live.map(p=>p.crumbleT===undefined?'-':'armed').join(','));
+}
+
+// ── scenario 86: the two shelves and the letter order ───────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(8);
+  const L=g.LEVELS[8];
+  const bars=L.platforms.filter(p=>p.lowBar).sort((a,b)=>a.x-b.x);
+  check('the stage hangs two shelves', bars.length===2, bars.length);
+
+  // one is a choice, one is a gate
+  const gate=bars.filter(b=>b.y<100);
+  const choice=bars.filter(b=>b.y>=100);
+  check('one runs to the ceiling — a gate', gate.length===1,
+        bars.map(b=>b.y).join(','));
+  check('...and the other can be gone over instead', choice.length===1);
+  // a step beside it, not the floor it is standing on: the floor is where
+  // you are when the shelf stops you, so counting it makes this unfailable
+  const JUMP_UP=99, JUMP_ACROSS=166;
+  const step_=L.platforms.filter(p=>p!==choice[0] && !p.lavaPit && !p.crack &&
+                                    p.y<g.GROUND_Y &&
+                                    p.y>choice[0].y && p.y-choice[0].y<=JUMP_UP)
+    .filter(p=>Math.max(0,Math.max(choice[0].x-(p.x+p.w),
+                                   p.x-(choice[0].x+choice[0].w)))<=JUMP_ACROSS);
+  check('the shelf you can go over has a ledge to jump it from',
+        step_.length>0,
+        L.platforms.filter(p=>p.y<g.GROUND_Y&&!p.goal).map(p=>p.x+'@'+p.y).join(' '));
+
+  // nothing may be parked inside a gate, or the stage is impassable on foot
+  check('nothing is buried inside the gate',
+        !L.platforms.some(p=>p!==gate[0] && !p.lavaPit &&
+                             p.x<gate[0].x+gate[0].w && p.x+p.w>gate[0].x &&
+                             p.y>gate[0].y && p.y<gate[0].y+gate[0].h),
+        'clear');
+
+  // the flame is the last letter before the block of ice, as everywhere else
+  for(const c of L.cages.filter(c=>c.species==='frozen')){
+    const before=L.weapons.filter(w=>w.x<c.x).sort((a,b)=>a.x-b.x);
+    check('the flame is the last letter before the ice block',
+          before.length>0 && before[before.length-1].kind==='flame',
+          before.map(w=>w.kind+'@'+w.x).join(' '));
+  }
+
+  // the wave, and a checkpoint past it
+  check('the run ends in an arena band', !!L.arena, JSON.stringify(L.arena||null));
+  check('...with a checkpoint past it, not inside it',
+        L.checkpoint>L.arena.end, L.checkpoint+' vs '+L.arena.end);
+  check('...and the checkpoint stands on solid ground',
+        L.platforms.some(p=>!p.lavaPit && !p.crack && p.y===g.GROUND_Y &&
+                            p.x<=L.checkpoint && p.x+p.w>=L.checkpoint),
+        L.checkpoint);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the band really spawns a wave',
+        [...g.enemies,...g.groundEnemies].some(e=>e.arenaEnemy),
+        [...g.enemies,...g.groundEnemies].filter(e=>e.arenaEnemy).length);
+
+  // and it survives a real run
+  for(let i=0;i<240;i++){
+    g.player.invuln=999; g.player.hp=Math.max(g.player.hp,3);
+    step(1);
+  }
+  check('the crevasse simulates without blowing up', g.STATE==='playing', g.STATE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

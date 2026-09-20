@@ -1051,6 +1051,72 @@ const LEVELS = [
     arena:null,
     boss:null,
   },
+  { // ── STAGE 9 — Crevasse Run (Frozen Peaks, the middle)
+    // The ridge taught the wind and the summit has the Titan; this one is
+    // about the floor. A single long crevasse is bridged by nothing but
+    // three frozen ponds laid end to end, and each one starts cracking the
+    // moment you stand on it — so the crossing is a rhythm, not a walk. The
+    // wind is gentler here on purpose: the ponds are pressure enough.
+    name:"CREVASSE RUN", theme:"ice",
+    width:1700,
+    wind:{speed:140, rate:1.7, warn:1.0, blow:1.6, calmMin:4, calmMax:6},
+    platforms:[
+      {x:-200,y:GROUND_Y,w:560,h:76},
+      {x:360, y:GROUND_Y,w:150,h:76,lavaPit:true},
+      {x:510, y:GROUND_Y,w:190,h:76},
+      // the crevasse itself — 460px of nothing, and the only floor over it
+      // is three ponds that will not hold
+      {x:700, y:GROUND_Y,w:460,h:76,lavaPit:true},
+      {x:700, y:GROUND_Y,w:153,h:76,crack:true},
+      {x:853, y:GROUND_Y,w:153,h:76,crack:true},
+      {x:1006,y:GROUND_Y,w:154,h:76,crack:true},
+      {x:1160,y:GROUND_Y,w:540,h:76},
+      {x:120, y:348,w:130,h:18},
+      {x:420, y:300,w:130,h:18},
+      // a shelf you can go over OR under: the slide is the short way, the
+      // ledge at 420 is the long one
+      {x:560, y:250,w:76, h:148,lowBar:true},
+      {x:640, y:250,w:120,h:18},
+      // the high road over the crevasse — slower, and it costs you the coins
+      {x:900, y:210,w:120,h:18},
+      {x:1200,y:300,w:140,h:18},
+      // and one that is a gate, not a choice
+      {x:1400,y:60, w:76, h:338,lowBar:true},
+      {x:1500,y:250,w:130,h:18},
+      {x:1560,y:346,w:140,h:18,goal:true},
+    ],
+    lavaPits:[{x:360,w:150},{x:700,w:460}],
+    icicles:[{x:300,y:66},{x:560,y:58},{x:800,y:70},
+             {x:1000,y:60},{x:1250,y:68},{x:1520,y:62}],
+    crystals:[{x:1250,y:370},{x:1300,y:380}],
+    coins:()=>[
+      ...coinArcOver(120,348,130,4),
+      ...coinArcOver(420,300,130,4),
+      ...coinArcOver(640,250,120,4),
+      ...coinArcOver(1200,300,140,5),
+      ...coinArcOver(1500,250,130,4),
+      // strung across the ponds, so the greedy line is the low one
+      ...coinArc(720,384,1140,384,7,26),
+    ],
+    flyers:[
+      {x:640,y:150,patrol:[520,900],  spd:76,species:"ice_flyer"},
+      {x:1250,y:150,patrol:[1170,1330],spd:84,species:"ice_flyer"},
+    ],
+    grounders:[
+      {platX:510, platW:190,spd:44,species:"ice_crusher"},
+      {platX:1160,platW:160,spd:46,species:"ice_crusher"},
+    ],
+    powerBoxes:[{x:420,y:250},{x:900,y:160}],
+    // the flame is the last letter before the frozen hostage
+    weapons:[{x:200,y:300,kind:"freeze"},{x:900,y:168,kind:"spread"},
+             {x:1220,y:250,kind:"flame"}],
+    cages:[{x:1520,y:224,species:"frozen"}],
+    escapeLine:"YARIKTAN SAĞ ÇIKILDI",
+    // past the arena band, same as every other stage with a wave
+    checkpoint:1480, parTime:120,
+    arena:{start:1160,end:1330},
+    boss:null,
+  },
 ];
 
 // ─── WORLDS (the mission select map) ──────────────────────────
@@ -1062,7 +1128,7 @@ const WORLDS=[
    mx:0.17, my:0.66, color:"#ff6a2a"},
   {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,5,4],
    mx:0.40, my:0.33, color:"#10b981"},
-  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[7,6],
+  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[7,8,6],
    mx:0.63, my:0.62, color:"#7dd3fc"},
   {id:"cyber",   name:"CYBER CRATER", sub:"SİBER KRATER",    levels:[],
    mx:0.85, my:0.30, color:"#c084fc"},
