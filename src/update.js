@@ -58,6 +58,7 @@ function update(dt){
     if(K["KeyR"] && stateTimer>0.5){ restartGame(); return; }
     if(continueTimer<=0){
       STATE="dead"; stateTimer=0;
+      bankSalvage();
       newRecord=saveHiScoreIfNeeded();
     }
     return;
@@ -763,6 +764,7 @@ function update(dt){
         const base=d.kind==="bosscoin"?320:(d.kind==="coin"?80:30);
         const pts=base*(d.landed?1:2);
         score+=pts;
+        earnCoins(COIN_VALUE[d.kind]||1);
         chain++; addChain(0);
         playChime(chain);
         spawnParticles(d.x-camX,d.y,6,dropColors(d.kind),
@@ -801,6 +803,7 @@ function update(dt){
     if(dist<COLLECT_R){
       c.popping=true; c.popT=0;
       score+=50;
+      earnCoins(1);
       chain++;
       addChain(0); // refresh combo timer / fever state without double-incrementing chain
       playChime(chain);
@@ -1663,6 +1666,7 @@ function takeDamage(reason){
       continueTickAt=Math.ceil(CONTINUE_SECONDS);
     } else {
       STATE="dead"; stateTimer=0;
+      bankSalvage();
       newRecord=saveHiScoreIfNeeded();
     }
   }
@@ -1730,6 +1734,8 @@ function endLevel(){
   const grade=computeGrade();
   lastGrade=grade.letter; lastGradeScore=grade.pts;
   lastGradeIsBest=recordGrade(grade.letter);
+  // the pouch is only safe once the squad is through the rift
+  bankStageClear(grade.letter);
 
   // the world's final score is locked in here, before the debrief plays, so
   // the victory screen never re-runs the high-score check

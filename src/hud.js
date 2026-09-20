@@ -93,6 +93,12 @@ function drawHUD(){
   ctx.fillStyle="#ffdd44";
   ctx.fillText(`HI-SCORE: ${Math.max(hiScore,score).toLocaleString()}`,bx+pad,lineY);
   lineY+=18;
+  // the pouch. Not banked yet — that is the whole point of showing it here,
+  // next to the hearts, while it can still be lost
+  ctx.font="bold 12px 'Courier New',monospace";
+  ctx.fillStyle=runCoins>0?"#ffcc55":"#6a6a80";
+  ctx.fillText(`KESE: ${runCoins}${runCoins>0?" ¢":""}`,bx+pad,lineY);
+  lineY+=18;
   ctx.font="bold 11px 'Courier New',monospace";
   ctx.fillStyle="#aaaacc";
   {
@@ -381,7 +387,7 @@ function drawMissionReport(){
   ctx.fillRect(0,0,W,H);
   ctx.textAlign="center";
 
-  const bw=600,bh=300,bx=W/2-bw/2,by=H/2-bh/2;
+  const bw=600,bh=372,bx=W/2-bw/2,by=H/2-bh/2;
   ctx.globalAlpha=fade;
   ctx.fillStyle="rgba(4,8,12,0.92)"; ctx.fillRect(bx,by,bw,bh);
   ctx.shadowColor="#00ff88"; ctx.shadowBlur=18;
@@ -446,11 +452,29 @@ function drawMissionReport(){
            by+256,"bold 14px 'Courier New',monospace",
            rescuedThisLevel>=total?"#8effc9":"#ffcc66",0);
 
+  // ── the payout, which is the part that outlives the run ──
+  // bankStageClear() has already run by the time this draws, so lastPayout
+  // is the real banked figure and not a second calculation that could drift
+  // away from it
+  const pay=lastPayout;
+  if(pay){
+    typeLine("KAZANÇ: "+pay.coins+" KESE + "+pay.rescue+" KURTARMA"+
+             "  x"+pay.mult.toFixed(1)+" = "+pay.scaled+" ¢",
+             by+286,"bold 14px 'Courier New',monospace","#ffcc55",0);
+    if(pay.firstTime){
+      typeLine("★ İLK GEÇİŞ BONUSU: +"+pay.first+" ¢",
+               by+308,"bold 14px 'Courier New',monospace","#8effc9",8);
+    }
+    typeLine("KASA: "+bank.coins.toLocaleString()+" ¢",
+             by+(pay.firstTime?334:320),"bold 18px 'Courier New',monospace","#ffdd44",10);
+  }
+
+  const nextY=by+(pay&&pay.firstTime?358:344);
   if(isFinal){
-    typeLine("SON BÖLÜM TAMAMLANDI",by+286,"bold 18px 'Courier New',monospace","#e879f9",10);
+    typeLine("SON BÖLÜM TAMAMLANDI",nextY,"bold 18px 'Courier New',monospace","#e879f9",10);
   } else {
     typeLine("SIRADAKİ: BÖLÜM "+(levelIndex+2)+" — "+LEVELS[levelIndex+1].name,
-             by+286,"bold 18px 'Courier New',monospace","#e879f9",10);
+             nextY,"bold 18px 'Courier New',monospace","#e879f9",10);
   }
 
   // the grade sits in the panel's top-right corner, outside the typed lines,
@@ -621,6 +645,18 @@ function drawWorldMap(){
   }
   ctx.fillStyle="#7788aa";
   ctx.fillText("◀ ▶  HEDEF SEÇ",bx+bw-14,by+42);
+  ctx.textAlign="left";
+
+  // the balance, top-right, where a briefing screen would put it
+  ctx.textAlign="right";
+  glow("#ffdd44",10);
+  ctx.font="bold 18px 'Courier New',monospace";
+  ctx.fillStyle="#ffdd44";
+  ctx.fillText(bank.coins.toLocaleString()+" ¢",W-22,44);
+  noGlow();
+  ctx.font="bold 9px 'Courier New',monospace";
+  ctx.fillStyle="#8899bb";
+  ctx.fillText("KASA",W-22,58);
   ctx.textAlign="left";
 
   ctx.textAlign="center";

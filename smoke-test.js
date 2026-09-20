@@ -269,6 +269,22 @@ function run(opts){
   get lastComboBonus(){return lastComboBonus;},
   get bestChainThisLevel(){return bestChainThisLevel;},
   get reportTypeEnd(){return reportTypeEnd;},
+  get coins(){return coins;},
+  drawHUD:()=>drawHUD(),
+  get bank(){return bank;},
+  get runCoins(){return runCoins;}, set runCoins(v){runCoins=v;},
+  get lastPayout(){return lastPayout;},
+  earnCoins:(n)=>earnCoins(n),
+  computePayout:(l)=>computePayout(l),
+  bankStageClear:(l)=>bankStageClear(l),
+  bankSalvage:()=>bankSalvage(),
+  spendCoins:(n)=>spendCoins(n),
+  get FIRST_CLEAR_BONUS(){return FIRST_CLEAR_BONUS;},
+  get SALVAGE_FRAC(){return SALVAGE_FRAC;},
+  get RESCUE_VALUE(){return RESCUE_VALUE;},
+  get BROOD_BONUS(){return BROOD_BONUS;},
+  get GRADE_MULT(){return GRADE_MULT;},
+  get COIN_VALUE(){return COIN_VALUE;},
   get warningBannerTimer(){return warningBannerTimer;},
   set warningBannerTimer(v){warningBannerTimer=v;},
   killBoss:()=>killBoss(),
@@ -3497,6 +3513,175 @@ function runSuite(){
     step(1);
   }
   check('the crevasse simulates without blowing up', g.STATE==='playing', g.STATE);
+}
+
+// ── scenario 87: the pouch is not the bank ──────────────────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  check('a new player has an empty bank', g.bank.coins===0, g.bank.coins);
+  check('...and an empty pouch', g.runCoins===0, g.runCoins);
+  check('nothing has been written to the store yet',
+        store.getItem('neonDinoBank')===null, store.getItem('neonDinoBank'));
+
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  // walk the dino onto the coins the stage laid out
+  const before=g.runCoins;
+  let picked=0;
+  for(let i=0;i<260 && picked<3;i++){
+    const c=g.coins.filter(c=>!c.collected)[0];
+    if(!c) break;
+    g.player.x=c.x-g.PLAYER_W/2; g.player.y=c.y-g.PLAYER_H/2;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+    if(g.runCoins>before+picked) picked++;
+  }
+  check('collecting a coin fills the pouch', g.runCoins>before, before+' -> '+g.runCoins);
+  check('...and NOT the bank', g.bank.coins===0, g.bank.coins);
+  check('...and nothing is persisted mid-stage',
+        store.getItem('neonDinoBank')===null, store.getItem('neonDinoBank'));
+  g.drawHUD();
+  check('the HUD renders the pouch', true);
+}
+
+// ── scenario 88: the rift pays, and the payment is kept ─────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.runCoins=40;
+  const parts=g.computePayout('A');
+  check('the payout is built from parts that add up',
+        parts.total===parts.scaled+parts.first,
+        parts.scaled+'+'+parts.first+' vs '+parts.total);
+  check('...the pouch is in it', parts.coins===40, parts.coins);
+  check('...and the grade multiplies it', parts.mult===g.GRADE_MULT['A'], parts.mult);
+
+  const got=g.bankStageClear('A');
+  check('reaching the rift banks the payout', g.bank.coins===got.total,
+        g.bank.coins+' vs '+got.total);
+  check('...and empties the pouch', g.runCoins===0, g.runCoins);
+  // asserting on the in-memory object would pass with the setItem deleted
+  check('...and writes it to the store', !!store.getItem('neonDinoBank'), store.getItem('neonDinoBank'));
+  const saved=JSON.parse(store.getItem('neonDinoBank'));
+  check('...with the same figure in it', saved.coins===g.bank.coins,
+        saved.coins+' vs '+g.bank.coins);
+  check('...and the stage marked as cleared', saved.firstClear[g.levelIndex]===true,
+        JSON.stringify(saved.firstClear));
+}
+
+// ── scenario 89: a replay does not pay like a first clear ───
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  g.runCoins=40;
+  const first=g.bankStageClear('A');
+  check('the first clear pays its bonus', first.first===g.FIRST_CLEAR_BONUS,
+        first.first);
+  check('...and says so', first.firstTime===true);
+
+  // the identical run, a second time
+  g.runCoins=40;
+  const again=g.bankStageClear('A');
+  check('a replay pays no first-clear bonus', again.first===0, again.first);
+  check('...and is therefore worth less', again.total<first.total,
+        first.total+' -> '+again.total);
+  check('...but is still worth something', again.total>0, again.total);
+  check('the difference is exactly the bonus',
+        first.total-again.total===g.FIRST_CLEAR_BONUS,
+        (first.total-again.total)+' vs '+g.FIRST_CLEAR_BONUS);
+}
+
+// ── scenario 90: the grade is what you are paid for ─────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  // hold everything else still and vary ONLY the letter
+  const at=(letter)=>{ g.runCoins=40; return g.computePayout(letter); };
+  const S=at('S'), D=at('D');
+  check('an S pays more than a D', S.total>D.total, D.total+' -> '+S.total);
+  check('...and the gap is the multiplier, not a fudge',
+        S.scaled===Math.round((40+D.rescue)*g.GRADE_MULT['S']),
+        S.scaled+' vs '+Math.round((40+D.rescue)*g.GRADE_MULT['S']));
+  // and the ladder is monotonic, which one pair cannot show
+  const letters=['D','C','B','A','S'];
+  let rising=true, seen=[];
+  let prev=-1;
+  for(const l of letters){ const v=at(l).total; seen.push(l+':'+v); if(v<=prev) rising=false; prev=v; }
+  check('every grade step pays more than the one below', rising, seen.join(' '));
+}
+
+// ── scenario 91: failing still pays, but not like winning ───
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.runCoins=40;
+  const winning=g.computePayout('A').total;
+
+  g.runCoins=40;
+  const salvage=g.bankSalvage();
+  check('a lost run still pays something', salvage>0, salvage);
+  check('...but far less than finishing', salvage<winning,
+        salvage+' vs '+winning);
+  // a literal expectation, not the constant read back: salvage must be a
+  // minority of what was in the pouch, whatever the rate is set to
+  check('...and only a minority of the pouch', salvage<40*0.5,
+        salvage+' of 40');
+  check('the salvage rate is a real fraction, not a full refund',
+        g.SALVAGE_FRAC>0 && g.SALVAGE_FRAC<0.5, g.SALVAGE_FRAC);
+  check('...and salvage pays exactly that rate',
+        salvage===Math.floor(40*g.SALVAGE_FRAC),
+        salvage+' vs '+Math.floor(40*g.SALVAGE_FRAC));
+  check('...and the pouch is gone either way', g.runCoins===0, g.runCoins);
+  check('the bank has it', g.bank.coins===salvage, g.bank.coins);
+  // and a run that collected nothing cannot conjure credits
+  g.runCoins=0;
+  const nothing=g.bankSalvage();
+  check('an empty pouch salvages nothing', nothing===0, nothing);
+}
+
+// ── scenario 92: a continue costs you the pouch ─────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.runCoins=55;
+  g.loadLevel(g.levelIndex);
+  check('reloading the stage empties the pouch', g.runCoins===0, g.runCoins);
+  check('...and does not bank it', g.bank.coins===0, g.bank.coins);
+  check('...and the coins are back on the floor to collect again',
+        g.coins.filter(c=>!c.collected).length>0,
+        g.coins.length);
+}
+
+// ── scenario 93: spending ───────────────────────────────────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  step(3);
+  g.runCoins=100;
+  g.bankStageClear('D');
+  const have=g.bank.coins;
+  check('there is money to spend', have>0, have);
+  check('you cannot spend what you do not have',
+        g.spendCoins(have+1)===false && g.bank.coins===have, g.bank.coins);
+  check('you can spend what you do', g.spendCoins(have)===true, g.bank.coins);
+  check('...and it comes off the balance', g.bank.coins===0, g.bank.coins);
+  check('...and the store agrees',
+        JSON.parse(store.getItem('neonDinoBank')).coins===0,
+        store.getItem('neonDinoBank'));
+  check('...but the lifetime total is not rewritten', g.bank.earned===have,
+        g.bank.earned+' vs '+have);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

@@ -504,6 +504,7 @@ function loadLevel(i){
   BOSS_TRIGGER_X=L.boss?L.boss.triggerX:Infinity;
 
   initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog(); initIcicles(); initWind();
+  runCoins=0;   // the pouch is per stage: a continue costs it, and hands the coins back to collect again
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 
   // clear anything left over from the previous stage
