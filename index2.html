@@ -58,6 +58,27 @@ function ensureAudio(){
   startBGM();
 }
 window.addEventListener("keydown", ensureAudio, {once:true});
+// Picking a destination with the mouse — handy while testing, and the
+// obvious thing to try on a map screen. The canvas is CSS-scaled to fit the
+// window, so a click has to be divided back into canvas space.
+function canvasPoint(ev){
+  const r=C.getBoundingClientRect();
+  if(!r||!r.width||!r.height) return null;
+  return {x:(ev.clientX-r.left)*(W/r.width), y:(ev.clientY-r.top)*(H/r.height)};
+}
+window.addEventListener("pointerdown", ev=>{
+  if(STATE!=="map"||mapStampTimer>0) return;
+  const p=canvasPoint(ev);
+  if(!p) return;
+  for(let i=0;i<WORLDS.length;i++){
+    const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
+    if(Math.hypot(p.x-nx,p.y-ny)>38) continue;
+    if(!worldState(i).playable){ playPew(); return; }
+    mapSel=i;
+    startWorld(i);
+    return;
+  }
+});
 window.addEventListener("pointerdown", ensureAudio, {once:true});
 
 // ─── CHIPTUNE BGM (bassline + arpeggio, pure oscillators, loops forever) ──
@@ -466,11 +487,30 @@ const THEMES={
             glow:"#10b981", haze:"16,185,129",
             spark:["#6ee7b7","#34d399","#a7f3d0"],
             portalArt:"forest_portal.png", portalSpin:false,
-            portalBloom:["110,255,180","40,180,120"], portalMote:"#a7f3d0" },
+            portalBloom:["110,255,180","40,180,120"], portalMote:"#a7f3d0",
+            bg:"forest_bg.png", bgTint:["rgba(2,12,8,0.45)","4,24,14","6,40,24","2,20,12"],
+            cap:{art:"forest_ground.png", x:150,w:540,
+                 tuftY:348, top:426, bodyEnd:1065, hangY:1074, hangEnd:1170,
+                 tile:96, tuftPx:13, hangPx:30} },
+  // Frozen Peaks. The pit is liquid nitrogen rather than lava, the shelves
+  // are ice (see slipFactor), and the ceiling drops on you.
+  ice:    { liquid:["#6fd7ff","#2b7fb8","#0a2740"], surface:"#dff6ff",
+            glow:"#7dd3fc", haze:"125,211,252",
+            spark:["#dff6ff","#7dd3fc","#bae6fd"],
+            portalArt:null, portalSpin:true,
+            portalBloom:["150,225,255","70,140,255"], portalMote:"#bae6fd",
+            bg:"ice_bg.png", bgTint:["rgba(4,10,22,0.38)","6,16,34","10,30,60","4,10,24"],
+            cap:{art:"ice_ground.png", x:300,w:424,
+                 tuftY:286, top:310, bodyEnd:560, hangY:620, hangEnd:900,
+                 tile:104, tuftPx:10, hangPx:34},
+            slip:true, snow:true, pitSpikes:true },
 };
 function levelTheme(){ return (LEVELS[levelIndex]&&LEVELS[levelIndex].theme)||"volcano"; }
 function themeOf(){ return THEMES[levelTheme()]||THEMES.volcano; }
 function isForest(){ return levelTheme()==="forest"; }
+function isIce(){ return levelTheme()==="ice"; }
+// a biome with a `cap` entry paints its platforms from a single block sheet
+function capSpec(){ return themeOf().cap||null; }
 
 const LEVELS = [
   { // ── STAGE 1 — Ember Path (gentle intro: one wide gap, no forced fight)
@@ -770,6 +810,57 @@ const LEVELS = [
     arena:null,
     boss:null,
   },
+  { // ── STAGE 7 — Glacier Summit (Frozen Peaks)
+    // Ice takes your grip away, the ceiling is loaded, and the hostage is
+    // frozen into a block that only FLAME opens. The Titan waits at the end.
+    name:"GLACIER SUMMIT", theme:"ice",
+    width:1600,
+    platforms:[
+      {x:-200,y:GROUND_Y,w:520,h:76},
+      {x:320, y:GROUND_Y,w:130,h:76,lavaPit:true},
+      {x:450, y:GROUND_Y,w:320,h:76},
+      {x:770, y:GROUND_Y,w:140,h:76,lavaPit:true},
+      {x:910, y:GROUND_Y,w:690,h:76},
+      {x:150, y:344,w:120,h:18},
+      {x:470, y:300,w:120,h:18},
+      {x:660, y:250,w:120,h:18},
+      {x:900, y:296,w:120,h:18},
+      {x:1130,y:250,w:120,h:18},
+      {x:1420,y:344,w:160,h:18,goal:true},
+    ],
+    lavaPits:[{x:320,w:130},{x:770,w:140}],
+    // the loaded ceiling
+    icicles:[{x:250,y:70},{x:400,y:60},{x:560,y:72},{x:700,y:58},
+             {x:850,y:70},{x:1000,y:62},{x:1150,y:72},{x:1290,y:60}],
+    crystals:[{x:1240,y:370},{x:1290,y:380}],
+    coins:()=>[
+      ...coinArcOver(150,344,120,4),
+      ...coinArcOver(470,300,120,4),
+      ...coinArcOver(660,250,120,5),
+      ...coinArcOver(900,296,120,4),
+      ...coinArcOver(1130,250,120,5),
+      ...coinArc(305,330,460,330,4,55),
+      ...coinArc(760,330,920,330,4,55),
+    ],
+    flyers:[
+      {x:520,y:160,patrol:[420,780], spd:78,species:"ice_flyer"},
+      {x:1000,y:150,patrol:[900,1340],spd:86,species:"ice_flyer"},
+    ],
+    grounders:[
+      {platX:450,platW:320,spd:44,species:"ice_crusher"},
+      {platX:910,platW:690,spd:48,species:"ice_crusher"},
+    ],
+    powerBoxes:[{x:470,y:250},{x:1130,y:200}],
+    // the flame has to come before the frozen hostage
+    weapons:[{x:230,y:300,kind:"flame"},{x:980,y:250,kind:"spread"}],
+    cages:[{x:1190,y:226,species:"frozen"}],
+    escapeLine:"BUZ ZİRVELERİNDEN İNİLDİ",
+    checkpoint:1050, parTime:110,
+    arena:{start:1000,end:1380},
+    boss:{x:1330,triggerX:1240,hp:15,kind:"titan",w:172,h:132,
+          sprite:"boss_frozen.png",
+          name:"BUZUL TİTANI", title:"ZİRVENİN SON BEKÇİSİ"},
+  },
 ];
 
 // ─── WORLDS (the mission select map) ──────────────────────────
@@ -781,7 +872,7 @@ const WORLDS=[
    mx:0.17, my:0.66, color:"#ff6a2a"},
   {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,5,4],
    mx:0.40, my:0.33, color:"#10b981"},
-  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[],
+  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[6],
    mx:0.63, my:0.62, color:"#7dd3fc"},
   {id:"cyber",   name:"CYBER CRATER", sub:"SİBER KRATER",    levels:[],
    mx:0.85, my:0.30, color:"#c084fc"},
@@ -1063,7 +1154,7 @@ function initEnemies(){
     patrolMin:d.patrol[0], patrolMax:d.patrol[1],
     // the canopy's dragonfly dies in two laser hits; the volcano's
     // pterodactyl still takes three
-    hp:d.species==="forest_flyer"?2:3, maxHp:d.species==="forest_flyer"?2:3,
+    hp:ENEMY_HP[d.species]||3, maxHp:ENEMY_HP[d.species]||3,
     wingPhase:rnd(0,Math.PI*2),
     glowPhase:rnd(0,Math.PI*2),
     wavePhase:rnd(0,Math.PI*2),
@@ -1096,14 +1187,13 @@ function initGroundEnemies(){
       species:d.species||null,
       turret,
       faceDir:-1,
-      shield:d.species==="forest_crawler",   // armoured from the front
+      shield:d.species==="forest_crawler"||d.species==="ice_crusher",  // armoured from the front
       spitCooldown:rnd(1.2,2.6),
       x:bx, y:by, w, h,
       vx:turret?0:(d.spd||55),
       patrolMin:turret?bx:d.platX+margin,
       patrolMax:turret?bx:d.platX+d.platW-margin-w,
-      hp:d.species==="forest_crawler"?4:(d.species==="forest_plant"?3:2),
-      maxHp:d.species==="forest_crawler"?4:(d.species==="forest_plant"?3:2),
+      hp:ENEMY_HP[d.species]||2, maxHp:ENEMY_HP[d.species]||2,
       hitFlash:0, dying:false, deathTimer:0, dead:false, beamTick:0,
       arenaEnemy: !turret && levelHasArena && d.platX>=ARENA_X_START && d.platX<=ARENA_X_END
     });
@@ -1155,6 +1245,8 @@ let player = {
   activePower:null, // {kind:'magnet'|'shield'|'hyper', timer, maxTimer, color}
   shieldCharge:false,
   dashTimer:0, dashCooldown:0, dashKeyWasDown:false,
+  chilled:0,          // seconds of slowed movement left, from a chill shot
+  groundT:0,          // seconds since last touching the floor (coyote window)
 };
 // recalibrated for a heavier, more inertia-driven feel: gravity pulls a
 // little harder, thrust eases in/out (see the jetpack block below) instead
@@ -1640,8 +1732,11 @@ function breakCage(cage){
     const oldest=followers.shift();
     babyDinos.push({x:oldest.x,y:oldest.y,vx:player.facing*110,life:1.6});
   }
+  // a thawed hostage runs as an ordinary hatchling — the frozen sheet is the
+  // block it was trapped in, not a shape it keeps
+  const carried=(cage.species==="frozen")?"baby":(cage.species||"baby");
   followers.push({x:cage.x,y:cage.y,bob:rnd(0,Math.PI*2),facing:player.facing,
-                  grace:REJOIN_GRACE,species:cage.species||"baby",joy:0.9});
+                  grace:REJOIN_GRACE,species:carried,joy:0.9});
   const total=LEVELS[levelIndex].cages.length;
   if(rescuedThisLevel>=total){
     queueRadio("allsafe","KOMUTA MERKEZİ",
@@ -1895,6 +1990,7 @@ function drawWarped(fn){
 
 // ─── BOSS: Alpha Pterodactyl guarding the exit gate ───────────
 const BOSS_W=140, BOSS_H=100;
+const BOSS_BREATH_REACH=430;   // how far the Glacier Titan's breath carries
 let boss=null;
 let gateOpen=false;
 let bossShakeTimer=0; // sustained heavier shake on boss death, separate from normal hit-shake decay
@@ -1916,6 +2012,8 @@ function initBoss(){
     phase:1,               // flips to 2 at half health — see enterBossPhase2
     diveState:"none", diveTimer:0, diveCooldown:rnd(3,5), diveDir:-1,
     stompCooldown:2.2, walkDir:-1,
+    breathState:"none", breathTimer:0, breathCooldown:rnd(2.5,4), breathDir:-1,
+    poundCooldown:rnd(5,7),
     wavePhase:rnd(0,Math.PI*2),
     fireCooldown:2.5,      // slow homing lava-ball attack
     flameCooldown:4,       // vertical flame-burst attack
@@ -1930,7 +2028,10 @@ function initBoss(){
   lavaBalls=[];
   bossFlameBursts=[];
   shockwaves=[];
-  { const pa=themeOf().portalArt; if(pa) artFor(pa); }   // start the rift download early
+  { const TH=themeOf();
+    if(TH.portalArt) artFor(TH.portalArt);
+    if(TH.bg) artFor(TH.bg);
+    if(TH.cap) artFor(TH.cap.art); }   // start the biome plates downloading
   if(boss) artFor(boss.art);            // start the download early
   if(boss&&boss.rageArt) artFor(boss.rageArt);
   bossIntroTriggered=false;
@@ -2036,6 +2137,92 @@ function drawFog(){
   ctx.restore();
 }
 
+// ─── FALLING ICICLES ──────────────────────────────────────────
+// Hanging from the ceiling until you walk under one: it shakes for
+// ICICLE_WARN, then drops like a stone and shatters. The warning is the
+// whole mechanic — it is a hazard you are told about, not one that cheats.
+const ICICLE_WARN=0.3, ICICLE_RESPAWN=6;
+let icicles=[];
+function initIcicles(){
+  icicles=(LEVELS[levelIndex].icicles||[]).map(ic=>({
+    x:ic.x, y:ic.y!==undefined?ic.y:40, baseY:ic.y!==undefined?ic.y:40,
+    state:"hang", timer:0, vy:0
+  }));
+}
+// the Titan's ground pound brings the whole ceiling down at once
+function dropAllIcicles(){
+  let n=0;
+  for(const ic of icicles){
+    if(ic.state!=="hang") continue;
+    ic.state="shake"; ic.timer=ICICLE_WARN*0.6; n++;
+  }
+  return n;
+}
+function updateIcicles(dt){
+  const pcx=player.x+PLAYER_W/2;
+  for(const ic of icicles){
+    if(ic.state==="hang"){
+      // armed by the player walking underneath it
+      if(Math.abs(pcx-ic.x)<26 && player.y>ic.y){ ic.state="shake"; ic.timer=ICICLE_WARN; }
+    } else if(ic.state==="shake"){
+      ic.timer-=dt;
+      if(ic.timer<=0){ ic.state="fall"; ic.vy=120; }
+    } else if(ic.state==="fall"){
+      ic.vy+=1500*dt;
+      ic.y+=ic.vy*dt;
+      if(player.invuln<=0 &&
+         Math.abs(pcx-ic.x)<20 && Math.abs((player.y+PLAYER_H/2)-ic.y)<38){
+        takeDamage("enemy");
+        shatterIcicle(ic);
+        continue;
+      }
+      // shatters on the first solid thing under it
+      let hit=ic.y>LAVA_Y;
+      if(!hit) for(const p of platforms){
+        if(p.lavaPit||p.gone) continue;
+        if(ic.x>p.x && ic.x<p.x+p.w && ic.y>=p.y && ic.y<=p.y+p.h+20){ hit=true; break; }
+      }
+      if(hit) shatterIcicle(ic);
+    } else {
+      ic.timer-=dt;
+      if(ic.timer<=0){ ic.state="hang"; ic.y=ic.baseY; ic.vy=0; }
+    }
+  }
+}
+function shatterIcicle(ic){
+  ic.state="gone"; ic.timer=ICICLE_RESPAWN;
+  playExplosion();
+  screenShake=Math.min(6,screenShake+3);
+  spawnParticles(ic.x-camX,ic.y,16,["#dff6ff","#7dd3fc","#bae6fd","#ffffff"],
+    {minSpd:70,maxSpd:240,minLife:0.25,maxLife:0.6,type:"square",gravity:420,minSz:2,maxSz:5});
+}
+function drawIcicles(){
+  const a=artFor("ice_icicle.png");
+  const ready=a&&a.loaded;
+  for(const ic of icicles){
+    if(ic.state==="gone") continue;
+    let x=ic.x-camX;
+    if(x<-40||x>W+40) continue;
+    if(ic.state==="shake") x+=Math.sin(t*50)*3;   // the tell
+    const h=74, w=22;
+    if(ready){
+      // one clean spike out of the middle of the cluster sheet
+      ctx.drawImage(a.img,400,120,240,880, x-w/2,ic.y-h*0.5,w,h);
+    } else {
+      ctx.fillStyle="#9fd8f5";
+      ctx.beginPath();
+      ctx.moveTo(x-9,ic.y-h*0.5); ctx.lineTo(x+9,ic.y-h*0.5); ctx.lineTo(x,ic.y+h*0.5);
+      ctx.closePath(); ctx.fill();
+    }
+    if(ic.state==="shake"){
+      glow("#bae6fd",12);
+      ctx.strokeStyle="rgba(190,230,255,0.9)"; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(x,ic.y+h*0.5); ctx.lineTo(x,LAVA_Y); ctx.stroke();
+      noGlow();
+    }
+  }
+}
+
 // ─── CRUMBLING SHELVES ────────────────────────────────────────
 // A mushroom shelf holds your weight for CRUMBLE_DELAY, shakes while it
 // decides, drops away, and grows back. Platforms are per-stage COPIES, so
@@ -2104,7 +2291,7 @@ function loadLevel(i){
   levelHasBoss=!!L.boss;
   BOSS_TRIGGER_X=L.boss?L.boss.triggerX:Infinity;
 
-  initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog();
+  initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog(); initIcicles();
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 
   // clear anything left over from the previous stage
@@ -2152,8 +2339,13 @@ genLavaSurface();
 let t = 0;
 
 // ─── FOREST BACKDROP ─────────────────────────────────────────
-function drawForestBG(){
-  ctx.fillStyle="#04140c"; ctx.fillRect(0,0,W,H);
+function drawBiomeBG(){
+  const TH=themeOf();
+  const tint=TH.bgTint||["rgba(2,12,8,0.45)","4,24,14","6,40,24","2,20,12"];
+  ctx.fillStyle=isIce()?"#061224":"#04140c"; ctx.fillRect(0,0,W,H);
+  const bgArt=artFor(TH.bg);
+  const forestBgLoaded=!!(bgArt&&bgArt.loaded);
+  const forestBgSprite=bgArt?bgArt.img:null;
   if(forestBgLoaded){
     const iw=forestBgSprite.naturalWidth, ih=forestBgSprite.naturalHeight;
     const dw=Math.max(1,iw*(H/ih));           // cover the canvas height
@@ -2169,22 +2361,33 @@ function drawForestBG(){
       ctx.restore();
     }
   }
-  // depth: darken the whole plate, then a green haze that thickens downward
-  ctx.fillStyle="rgba(2,12,8,0.45)";
+  // depth: darken the whole plate, then a haze that thickens downward
+  ctx.fillStyle=tint[0];
   ctx.fillRect(0,0,W,H);
   const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,"rgba(4,24,14,0.55)");
-  g.addColorStop(0.45,"rgba(6,40,24,0.18)");
-  g.addColorStop(1,"rgba(2,20,12,0.65)");
+  g.addColorStop(0,`rgba(${tint[1]},0.55)`);
+  g.addColorStop(0.45,`rgba(${tint[2]},0.18)`);
+  g.addColorStop(1,`rgba(${tint[3]},0.65)`);
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  // spore motes drifting through the canopy light
-  if(Math.random()<0.25) particles.push({
-    x:rnd(0,W), y:rnd(40,H-120),
-    vx:rnd(-12,12), vy:-rnd(4,16),
-    life:1, maxLife:rnd(1.6,3.2),
-    color:Math.random()<0.5?"rgba(110,231,183,0.55)":"rgba(52,211,153,0.4)",
-    size:rnd(1,3), type:"circle", gravity:-3
-  });
+  if(TH.snow){
+    // snowfall: slow, heavy flakes that drift sideways as they settle
+    if(Math.random()<0.55) particles.push({
+      x:rnd(-20,W+20), y:-8,
+      vx:rnd(-16,10), vy:rnd(18,46),
+      life:1, maxLife:rnd(2.4,4.4),
+      color:Math.random()<0.6?"rgba(255,255,255,0.85)":"rgba(200,235,255,0.7)",
+      size:rnd(1,3), type:"square", gravity:6
+    });
+  } else {
+    // spore motes drifting through the canopy light
+    if(Math.random()<0.25) particles.push({
+      x:rnd(0,W), y:rnd(40,H-120),
+      vx:rnd(-12,12), vy:-rnd(4,16),
+      life:1, maxLife:rnd(1.6,3.2),
+      color:Math.random()<0.5?"rgba(110,231,183,0.55)":"rgba(52,211,153,0.4)",
+      size:rnd(1,3), type:"circle", gravity:-3
+    });
+  }
 }
 
 // ─── PARALLAX BG ─────────────────────────────────────────────
@@ -2200,7 +2403,7 @@ function noGlow(){ ctx.shadowBlur=0; }
 
 // ─── DRAW BACKGROUND ─────────────────────────────────────────
 function drawBG(){
-  if(isForest()){ drawForestBG(); return; }
+  if(themeOf().bg){ drawBiomeBG(); return; }
   // deep cave gradient
   const bg = ctx.createLinearGradient(0,0,0,H);
   bg.addColorStop(0,"#0a0618");
@@ -2291,20 +2494,20 @@ function drawBG(){
 // forest_bg.png is a portrait corridor, so it is scaled to the canvas height
 // and mirror-tiled sideways — the corridor is roughly symmetric, so flipped
 // copies meet without a seam. It scrolls slower than the level for parallax.
-const forestBgSprite=new Image();
-let forestBgLoaded=false;
-forestBgSprite.onload=()=>{ forestBgLoaded=true; };
-forestBgSprite.src="forest_bg.png";
+// (the backdrop and the platform sheet are pulled from the shared sprite
+// registry now, so a new biome is a THEMES entry rather than two more
+// globals and another draw function)
 
 // forest_ground.png is ONE mossy block, not a tileable strip. Three bands of
 // it are used: the grass tufts that poke ABOVE the walk line, the body, and
 // the vines that hang below into open air. Row 426 is where the art becomes
 // a solid slab, and that row is drawn exactly at p.y — the same line the
 // collision resolver stands the player on.
-const forestGroundSprite=new Image();
-let forestGroundLoaded=false;
-forestGroundSprite.onload=()=>{ forestGroundLoaded=true; };
-forestGroundSprite.src="forest_ground.png";
+
+// Every block-sheet biome names its own bands in THEMES[x].cap. The rule is
+// the same one ground.png follows: the row where the art first goes solid is
+// blitted exactly at p.y, the collision line. Decoration rises above it and
+// whatever hangs off the sheet hangs below a floating ledge.
 const FG_X=150, FG_W=540;        // the block's clean middle, no ragged edges
 const FG_TUFT_Y=348, FG_TOP=426; // tufts above the surface line / the surface
 const FG_BODY_END=1065, FG_VINE_Y=1074, FG_VINE_END=1170;
@@ -2313,31 +2516,32 @@ const FG_BODY_END=1065, FG_VINE_Y=1074, FG_VINE_END=1170;
 // vertically by the platform. Moss is noise and takes non-uniform scaling
 // without complaint, which is what lets one block art serve every ledge.
 function drawForestCap(px,worldX,y,w,capH,isFloat,bodyBottom){
-  if(!forestGroundLoaded) return;
-  const TW=96;
-  const tuftH=13, vineH=30;
+  const c=capSpec();
+  if(!c) return false;
+  const a=artFor(c.art);
+  if(!a||!a.loaded) return false;
+  const img=a.img;
+  const TW=c.tile, tuftH=c.tuftPx, hangH=c.hangPx;
   ctx.save();
-  ctx.beginPath(); ctx.rect(px,y-tuftH,w,(bodyBottom-y)+vineH+tuftH); ctx.clip();
+  ctx.beginPath(); ctx.rect(px,y-tuftH,w,(bodyBottom-y)+hangH+tuftH); ctx.clip();
   const i0=Math.floor(worldX/TW), i1=Math.ceil((worldX+w)/TW);
   for(let i=i0;i<i1;i++){
     const tx=px+(i*TW-worldX);
     ctx.save();
     if(i%2!==0){ ctx.translate(tx+TW,0); ctx.scale(-1,1); }
     else ctx.translate(tx,0);
-    // grass tufts, rising above the walk line
-    ctx.drawImage(forestGroundSprite,FG_X,FG_TUFT_Y,FG_W,FG_TOP-FG_TUFT_Y,
-                  0,y-tuftH,TW,tuftH);
-    // mossy body
-    ctx.drawImage(forestGroundSprite,FG_X,FG_TOP,FG_W,FG_BODY_END-FG_TOP,
-                  0,y,TW,bodyBottom-y);
-    // vines, only where there is open air under the ledge
+    // the decorative fringe, rising above the walk line
+    ctx.drawImage(img,c.x,c.tuftY,c.w,c.top-c.tuftY, 0,y-tuftH,TW,tuftH);
+    // the solid body
+    ctx.drawImage(img,c.x,c.top,c.w,c.bodyEnd-c.top, 0,y,TW,bodyBottom-y);
+    // whatever hangs off it, only where there is open air below
     if(isFloat){
-      ctx.drawImage(forestGroundSprite,FG_X,FG_VINE_Y,FG_W,FG_VINE_END-FG_VINE_Y,
-                    0,bodyBottom,TW,vineH);
+      ctx.drawImage(img,c.x,c.hangY,c.w,c.hangEnd-c.hangY, 0,bodyBottom,TW,hangH);
     }
     ctx.restore();
   }
   ctx.restore();
+  return true;
 }
 
 // ─── GROUND SURFACE TILE (ground.png) ─────────────────────────
@@ -2548,7 +2752,11 @@ function drawPlatforms(){
       const isFloat = p.y < GROUND_Y;
       const capH = clamp(p.h*0.55,22,44);
       const g=ctx.createLinearGradient(0,p.y,0,p.y+p.h);
-      if(isForest()){
+      if(isIce()){
+        g.addColorStop(0, isFloat?"#2b5f86":"#1e4a6b");
+        g.addColorStop(0.45,"#123045");
+        g.addColorStop(1, "#071825");
+      } else if(isForest()){
         g.addColorStop(0, isFloat?"#1e3a2a":"#16301f");
         g.addColorStop(0.45,"#0f2318");
         g.addColorStop(1, "#06120c");
@@ -2560,10 +2768,12 @@ function drawPlatforms(){
       ctx.fillStyle=g;
       ctx.fillRect(px,p.y,p.w,p.h);
 
-      if(isForest()&&forestGroundLoaded){
-        // the mossy block's solid row lands on p.y; tufts rise above it and
-        // vines hang below a floating ledge
+      // a biome with its own block sheet paints from that; the volcano keeps
+      // the mirror-tiled ground.png strip
+      const capped = capSpec() &&
         drawForestCap(px,p.x,p.y,p.w,capH,isFloat,isFloat?p.y+capH:p.y+p.h);
+      if(capped){
+        /* painted from the biome sheet */
       } else if(groundLoaded){
         // the texture's own top edge IS the collision line at p.y
         drawGroundCap(px,p.x,p.y,p.w,capH);
@@ -2759,6 +2969,22 @@ function drawLava(){
       i===0 ? ctx.moveTo(lpx+i,GROUND_Y+5+hh) : ctx.lineTo(lpx+i,GROUND_Y+5+hh);
     }
     ctx.stroke(); noGlow();
+    if(TH.pitSpikes){
+      // a cryo pit is not a pool you fall into, it is a mouth
+      ctx.fillStyle="#cfeeff";
+      for(let sx=lpx+8;sx<lpx+lp.w-4;sx+=17){
+        ctx.beginPath();
+        ctx.moveTo(sx-6,GROUND_Y+8); ctx.lineTo(sx+6,GROUND_Y+8);
+        ctx.lineTo(sx,GROUND_Y-16-8*Math.abs(Math.sin(sx*0.7)));
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle="rgba(120,200,240,0.55)";
+      for(let sx=lpx+14;sx<lpx+lp.w-4;sx+=23){
+        ctx.beginPath();
+        ctx.moveTo(sx-5,H); ctx.lineTo(sx+5,H); ctx.lineTo(sx,GROUND_Y+26);
+        ctx.closePath(); ctx.fill();
+      }
+    }
     // heat bloom — radial, so it fades out in every direction and the pit
     // never picks up a straight edge of its own
     ctx.globalCompositeOperation="lighter";
@@ -2907,7 +3133,7 @@ function drawGroundEnemy(e){
   if(e.species){
     const cx=e.x+e.w/2-camX, cy=e.y+e.h/2;
     if(e.hitFlash>0) ctx.globalAlpha=0.55+0.45*Math.sin(e.hitFlash*30);
-    glow(e.shield?"#10b981":"#a855f7",e.shield?12:10);
+    glow(e.shield?(isIce()?"#7dd3fc":"#10b981"):"#a855f7",e.shield?12:10);
     const ok=drawSpeciesArt(e.species,cx,cy,e.w,e.h,e.faceDir||1);
     noGlow();
     ctx.globalAlpha=1;
@@ -2918,7 +3144,7 @@ function drawGroundEnemy(e){
       ctx.save();
       ctx.globalCompositeOperation="lighter";
       ctx.globalAlpha=(blocking?0.5:0.22)+0.18*Math.sin(t*(blocking?18:4));
-      ctx.fillStyle="#10b981";
+      ctx.fillStyle=isIce()?"#7dd3fc":"#10b981";
       ctx.fillRect(cx-e.w/2,cy-e.h/2,e.w,e.h*0.45);
       ctx.restore();
     }
@@ -3359,7 +3585,21 @@ function drawCages(){
     // dark cell behind the captive so it reads as being inside something
     ctx.fillStyle="rgba(8,4,14,0.55)";
     ctx.fillRect(cx-15,cy-21,30,42);
-    // the captive baby dino, looking out toward the player
+    // the captive, looking out toward the player. A frozen one is drawn as
+    // its ice block — that sheet IS the cage.
+    if(cage.species==="frozen"){
+      if(!drawSpeciesArt("frozen",cx,cy,44,44,player.x>cage.x?1:-1)){
+        ctx.fillStyle="#9fd8f5"; ctx.fillRect(cx-18,cy-20,36,40);
+      }
+      const melt=1-clamp(cage.hp,0,1);
+      if(melt>0.02){
+        glow("#bae6fd",10);
+        ctx.strokeStyle=`rgba(255,220,150,${0.3+0.6*melt})`; ctx.lineWidth=2;
+        ctx.strokeRect(cx-20-melt*3,cy-22-melt*3,40+melt*6,44+melt*6);
+        noGlow();
+      }
+      continue;
+    }
     drawBaby(cx,cy+2,34,player.x>cage.x?1:-1,cage.species);
     // cage bars, drawn OVER the captive
     ctx.strokeStyle="#8a8a95"; ctx.lineWidth=3;
@@ -3448,8 +3688,20 @@ function drawLavaBalls(){
   for(const lb of lavaBalls){
     const lx=lb.x-camX, ly=lb.y;
     if(lb.acid){
-      // spore ball / acid drip — the canopy's own ammunition
+      // spore ball / acid drip / chill round — themed ammunition
       const p=0.5+0.5*Math.sin(t*12);
+      if(lb.chill){
+        glow("#7dd3fc",16+6*p);
+        ctx.fillStyle="#7dd3fc";
+        ctx.beginPath(); ctx.arc(lx,ly,8,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle="#f0fbff";
+        ctx.beginPath(); ctx.arc(lx-2,ly-2,3,0,Math.PI*2); ctx.fill();
+        // a frost trail behind it
+        if(Math.random()<0.5) spawnParticles(lx,ly,1,["#dff6ff","#7dd3fc"],
+          {minSpd:5,maxSpd:20,minLife:0.2,maxLife:0.5,type:"square",gravity:10,minSz:1,maxSz:3});
+        noGlow();
+        continue;
+      }
       glow("#10b981",14+6*p);
       ctx.fillStyle="#10b981";
       ctx.beginPath(); ctx.ellipse(lx,ly,8,9+2*p,0,0,Math.PI*2); ctx.fill();
@@ -3529,8 +3781,14 @@ const SPECIES={
   forest_crawler: {art:"forest_crawler.png", faces: 1, w:58, h:44},
   forest_plant:   {art:"forest_plant.png",   faces:-1, w:50, h:54},
   trike:          {art:"baby_trike.png",     faces: 1},
+  ice_flyer:      {art:"ice_flyer.png",      faces:-1, w:62, h:42},
+  ice_crusher:    {art:"ice_crusher.png",    faces:-1, w:66, h:52},
+  frozen:         {art:"baby_frozen.png",    faces:-1},
 };
 // Draws a registry sprite fitted into w*h, mirrored to face a direction.
+// one place to read a species' toughness from
+const ENEMY_HP={forest_crawler:4, forest_plant:3, forest_flyer:2,
+                ice_crusher:4, ice_flyer:2};
 function drawSpeciesArt(species,cx,cy,w,h,dir){
   const sp=SPECIES[species]; if(!sp) return false;
   const a=artFor(sp.art);
@@ -3597,6 +3855,34 @@ function drawBoss(){
     ctx.fillStyle="#ff0000";
     ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
   }
+  // the freeze breath, drawn in the boss's own local space
+  if(boss.breathState&&boss.breathState!=="none"){
+    const dir=boss.breathDir||-1;
+    const bx=dir*boss.w*0.45, by=-boss.h*0.18;
+    const reach=BOSS_BREATH_REACH;
+    ctx.save();
+    if(boss.breathState==="wind"){
+      const warn=0.4+0.4*Math.sin(t*26);
+      ctx.strokeStyle=`rgba(190,230,255,${warn})`; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+dir*reach,by); ctx.stroke();
+    } else {
+      ctx.globalCompositeOperation="lighter";
+      glow("#7dd3fc",22);
+      const g=ctx.createLinearGradient(bx,0,bx+dir*reach,0);
+      g.addColorStop(0,"rgba(223,246,255,0.95)");
+      g.addColorStop(0.6,"rgba(125,211,252,0.55)");
+      g.addColorStop(1,"rgba(125,211,252,0)");
+      ctx.fillStyle=g;
+      const hgt=30+6*Math.sin(t*22);
+      ctx.beginPath();
+      ctx.moveTo(bx,by-10); ctx.lineTo(bx+dir*reach,by-hgt);
+      ctx.lineTo(bx+dir*reach,by+hgt); ctx.lineTo(bx,by+10);
+      ctx.closePath(); ctx.fill();
+      noGlow();
+    }
+    ctx.restore();
+  }
+
   // a telegraph flash right before a diving swoop
   if(boss.diveState==="telegraph"){
     ctx.save();
@@ -3744,6 +4030,16 @@ function drawHUD(){
 
   drawPowerUpUI();
   drawWeaponUI();
+  if(player.chilled>0){
+    const fw=140,fx=W/2-fw/2,fy=player.activePower?88:46;
+    ctx.fillStyle="rgba(8,20,34,0.8)"; ctx.fillRect(fx,fy,fw,20);
+    ctx.strokeStyle="#7dd3fc"; ctx.lineWidth=2; ctx.strokeRect(fx,fy,fw,20);
+    ctx.fillStyle="#bae6fd";
+    ctx.fillRect(fx+2,fy+2,(fw-4)*clamp(player.chilled/1.0,0,1),16);
+    ctx.font="bold 11px 'Courier New',monospace";
+    ctx.fillStyle="#04203a"; ctx.textAlign="center";
+    ctx.fillText("DONDU",W/2,fy+14); ctx.textAlign="left";
+  }
 }
 
 // ─── ACTIVE POWER-UP TIMER (top-center) ────────────────────────
@@ -4468,6 +4764,7 @@ function update(dt){
   const dashKey = K["ShiftLeft"]||K["ShiftRight"];
 
   updateCrumbles(dt);
+  updateIcicles(dt);
   updateFog(dt);
   updateVines(dt,left,right,jump);
   // hanging from a vine suspends the dino's own physics entirely — the
@@ -4493,9 +4790,20 @@ function update(dt){
     return;
   }
 
-  if(left) { player.vx+= (-MOVE_SPD-player.vx)*Math.min(1,dt*10); player.facing=-1; }
-  else if(right){ player.vx+= (MOVE_SPD-player.vx)*Math.min(1,dt*10); player.facing=1; }
-  else { player.vx*=Math.pow(0.05,dt); }
+  // Ice takes the grip away: you accelerate slowly and you cannot stop dead,
+  // so a run has to be planned a platform ahead. A chill shot from an ice
+  // sentry halves the top speed for a second on top of that.
+  // onGround flickers frame to frame on a resting player — the engine
+  // alternates a settle frame and a resolve frame — so reading it directly
+  // gave ice back half its grip. Use a short coyote window instead.
+  const onIce=isIce()&&player.groundT<0.12;
+  const grip=onIce?3.2:10;
+  const slide=onIce?0.72:0.05;
+  if(player.chilled>0) player.chilled-=dt;
+  const topSpd=MOVE_SPD*(player.chilled>0?0.45:1);
+  if(left) { player.vx+= (-topSpd-player.vx)*Math.min(1,dt*grip); player.facing=-1; }
+  else if(right){ player.vx+= (topSpd-player.vx)*Math.min(1,dt*grip); player.facing=1; }
+  else { player.vx*=Math.pow(slide,dt); }
 
   // -- air-dash (Shift): instant blue flame burst that punches the dino
   // forward, clears wide lava gaps, and grants brief i-frames --
@@ -4671,6 +4979,7 @@ function update(dt){
     }
   }
   player.onGround=onAnyGround;
+  player.groundT=onAnyGround?0:player.groundT+dt;
 
   // lava death
   if(player.y+PLAYER_H>LAVA_Y+10){
@@ -4888,6 +5197,22 @@ function update(dt){
     // The dragonfly weaves harder and holds its altitude instead of diving —
     // it wants to be ABOVE you, because that is where its attack works from.
     e.y=e.baseY+Math.sin(Date.now()/200+e.wavePhase)*(e.species==="forest_flyer"?22:10);
+    if(e.species==="ice_flyer"){
+      // holds a lane and snipes: a chill shot does not hurt much on its own,
+      // it takes your footing away on a floor that is already slippery
+      e.baseY+=((150-e.baseY))*dt*0.4;
+      e.dripCooldown-=dt;
+      const dxP=(player.x+PLAYER_W/2)-(e.x+e.w/2);
+      if(e.dripCooldown<=0 && Math.abs(dxP)<420){
+        e.dripCooldown=rnd(1.8,3.2);
+        const dyP=(player.y+PLAYER_H/2)-(e.y+e.h/2);
+        const dd=Math.hypot(dxP,dyP)||1;
+        lavaBalls.push({x:e.x+e.w/2, y:e.y+e.h*0.5,
+                        vx:(dxP/dd)*260, vy:(dyP/dd)*260-40,
+                        life:0, acid:true, chill:true});
+        playPew();
+      }
+    }
     if(e.species==="forest_flyer"){
       e.baseY+=((120-e.baseY))*dt*0.5;
       e.dripCooldown-=dt;
@@ -4953,6 +5278,16 @@ function update(dt){
       if(e.x<e.patrolMin){ e.x=e.patrolMin; e.vx=Math.abs(e.vx); }
       else if(e.x>e.patrolMax){ e.x=e.patrolMax; e.vx=-Math.abs(e.vx); }
       e.faceDir=Math.sign(e.vx)||e.faceDir;
+      if(e.species==="ice_crusher"){
+        // it is a tank: every footfall shakes the screen a little
+        e.stepPhase=(e.stepPhase||0)+dt*Math.abs(e.vx)*0.05;
+        if(e.stepPhase>1){
+          e.stepPhase=0;
+          screenShake=Math.min(6,screenShake+1.4);
+          spawnParticles(e.x+e.w/2-camX,e.y+e.h,4,["#dff6ff","#bae6fd"],
+            {minSpd:20,maxSpd:70,upBias:40,minLife:0.15,maxLife:0.4,type:"square",gravity:200,minSz:1,maxSz:3});
+        }
+      }
     }
 
     // STOMP — dropping onto a shielded crawler is the other way through its
@@ -5148,10 +5483,23 @@ function update(dt){
   // by simply walking into them — freeing the baby dino takes a real hit ──
   for(const cage of cages){
     if(!cage.alive) continue;
-    if(inLaserSweep(cage.x,cage.y,18)){
-      cage.hp-=(hyperActive?4:1)*dt*10; // ticks down fast under sustained fire, instant under HYPER BEAM
-      if(cage.hp<=0) breakCage(cage);
+    if(!inLaserSweep(cage.x,cage.y,18)) continue;
+    if(cage.species==="frozen" && !isFlame){
+      // a block of ice does not care about a plasma beam. Say so, once in a
+      // while, rather than letting the player wonder why nothing happens.
+      if(Math.random()<dt*3){
+        spawnFloatingText(cage.x-camX,cage.y-24,"BUZ ERİMİYOR","#7dd3fc",12);
+        spawnParticles(cage.x-camX,cage.y,2,["#dff6ff","#7dd3fc"],
+          {minSpd:40,maxSpd:120,minLife:0.1,maxLife:0.3,type:"square",gravity:120,minSz:1,maxSz:3});
+      }
+      continue;
     }
+    cage.hp-=(hyperActive?4:1)*dt*(cage.species==="frozen"?6:10);
+    if(cage.species==="frozen"&&Math.random()<dt*20){
+      spawnParticles(cage.x-camX,cage.y+rnd(-16,16),1,["#dff6ff","#bae6fd","#ffffff"],
+        {minSpd:20,maxSpd:70,minLife:0.2,maxLife:0.5,type:"circle",gravity:180,minSz:1,maxSz:3});
+    }
+    if(cage.hp<=0) breakCage(cage);
   }
   cages=cages.filter(c=>c.alive);
 
@@ -5258,7 +5606,64 @@ function update(dt){
       boss.wavePhase+=dt*(rage?3.2:2);
       if(boss.hitFlash>0) boss.hitFlash=Math.max(0,boss.hitFlash-dt);
 
-      if(boss.kind==="walker"){
+      if(boss.kind==="titan"){
+        // A GROUND TITAN. It never leaves the floor, closes slowly, and has
+        // two answers: a horizontal freeze breath, and a slam that brings
+        // the whole ceiling down on you.
+        boss.y=GROUND_Y-boss.h/2;
+        const toP=(player.x+PLAYER_W/2)-boss.x;
+        boss.walkDir=Math.sign(toP)||1;
+        if(Math.abs(toP)>140 && boss.breathState==="none"){
+          boss.x+=boss.walkDir*(rage?70:42)*dt;
+        }
+
+        // freeze breath — telegraph, then a wide horizontal beam
+        if(boss.breathState==="none"){
+          boss.breathCooldown-=dt*(rage?1.6:1);
+          if(boss.breathCooldown<=0){
+            boss.breathState="wind"; boss.breathTimer=0.5;
+            boss.breathDir=boss.walkDir;
+          }
+        } else if(boss.breathState==="wind"){
+          boss.breathTimer-=dt;
+          if(boss.breathTimer<=0){ boss.breathState="blow"; boss.breathTimer=rage?1.3:1.0; }
+        } else {
+          boss.breathTimer-=dt;
+          const bx=boss.x+boss.breathDir*boss.w*0.45;
+          const by=boss.y-boss.h*0.18;
+          const reach=BOSS_BREATH_REACH;
+          // anything inside the band is frozen and hurt
+          const lo=boss.breathDir>0?bx:bx-reach, hi=boss.breathDir>0?bx+reach:bx;
+          if(player.invuln<=0 &&
+             player.x+PLAYER_W>lo && player.x<hi &&
+             Math.abs((player.y+PLAYER_H/2)-by)<34){
+            player.chilled=1.4;
+            takeDamage("enemy");
+          }
+          if(Math.random()<dt*90) spawnParticles(
+            (bx+boss.breathDir*rnd(0,reach))-camX, by+rnd(-16,16), 1,
+            ["#dff6ff","#7dd3fc","#ffffff"],
+            {minSpd:40,maxSpd:160,minLife:0.2,maxLife:0.6,type:"square",gravity:-20,minSz:2,maxSz:5});
+          if(boss.breathTimer<=0){
+            boss.breathState="none";
+            boss.breathCooldown=rnd(2.6,4.2);
+          }
+        }
+
+        // the slam: every icicle on the ceiling comes down at once
+        boss.poundCooldown-=dt*(rage?1.5:1);
+        if(boss.poundCooldown<=0 && boss.breathState==="none"){
+          boss.poundCooldown=rnd(5,8);
+          const n=dropAllIcicles();
+          screenShake=Math.min(6,screenShake+6);
+          bossShakeTimer=Math.max(bossShakeTimer,0.6);
+          hitStopTimer=Math.max(hitStopTimer,0.07);
+          playExplosion();
+          if(n>0) spawnFloatingText(boss.x-camX,boss.y-boss.h*0.7,"TAVAN ÇÖKÜYOR!","#bae6fd",16);
+          spawnParticles(boss.x-camX,GROUND_Y-6,20,["#dff6ff","#7dd3fc","#ffffff"],
+            {minSpd:80,maxSpd:260,upBias:80,minLife:0.3,maxLife:0.7,type:"square",gravity:380,minSz:2,maxSz:6});
+        }
+      } else if(boss.kind==="walker"){
         // GROUND UNIT: it never leaves the floor. It closes on the player and
         // stomps; the wave punishes standing, so the fight reads as "keep
         // moving and get airborne", the opposite of the flyers.
@@ -5325,7 +5730,7 @@ function update(dt){
 
       // attack 2: a downward vertical flame burst dropped beneath the boss
       boss.flameCooldown-=dt*(rage?1.8:1);
-      if(boss.flameCooldown<=0 && boss.kind!=="walker"){
+      if(boss.flameCooldown<=0 && boss.kind!=="walker" && boss.kind!=="titan"){
         boss.flameCooldown=rnd(3.5,5);
         bossFlameBursts.push({x:boss.x,y:boss.y+boss.h/2,life:0,maxLife:1.1});
         playExplosion();
@@ -5367,6 +5772,8 @@ function update(dt){
       continue;
     }
     if(player.invuln<=0 && near){
+      // a chill round freezes your footing as well as taking a heart
+      if(lb.chill) player.chilled=1.0;
       takeDamage("enemy");
       spawnParticles(lb.x-camX,lb.y,8,["#ff8800","#ffcc00","#ff4400"],
         {minSpd:60,maxSpd:180,minLife:0.2,maxLife:0.4,type:"circle",gravity:150});
@@ -5658,6 +6065,13 @@ function killBoss(){
   }
   spawnParticles(ex,ey,26,["#ffcc00","#fff3a0","#ffffff"],
     {minSpd:140,maxSpd:420,upBias:120,minLife:0.5,maxLife:1.2,type:"circle",gravity:300,minSz:2,maxSz:6});
+  if(isIce()){
+    // it freezes solid, then comes apart
+    spawnParticles(ex,ey,46,["#dff6ff","#7dd3fc","#bae6fd","#ffffff"],
+      {minSpd:90,maxSpd:380,minLife:0.5,maxLife:1.4,type:"square",gravity:300,minSz:3,maxSz:9,
+       bounce:true,restitution:0.35});
+    feverFlash=Math.max(feverFlash,0.8);
+  }
   score+=5000;
   spawnFloatingText(ex,ey-40,"BOSS DEFEATED!","#ffee44",22);
   spawnFloatingText(ex,ey-16,"+5000","#ffdd44",16);
@@ -5837,6 +6251,7 @@ function loop(now){
   drawMagmaBursts();
   drawPlatforms();
   drawVines();
+  drawIcicles();
   drawFog();
   drawCheckpoint();
   drawCrystals();

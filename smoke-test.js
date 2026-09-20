@@ -90,7 +90,9 @@ function run(opts){
   sandbox.window.AudioContext=undefined;      // ensureAudio bails out cleanly
   sandbox.window.webkitAudioContext=undefined;
   sandbox.document={
-    getElementById(){ return { width:0,height:0,style:{}, getContext(){ return makeCtx(); } }; },
+    getElementById(){ return { width:0,height:0,style:{},
+      getBoundingClientRect(){ return {left:0,top:0,width:900,height:506}; },
+      getContext(){ return makeCtx(); } }; },
     createElement(){ return { width:0,height:0,style:{}, getContext(){ return makeCtx(); } }; },
     addEventListener(){},
   };
@@ -126,6 +128,11 @@ function run(opts){
   get SPECIES(){return SPECIES;},
   get vines(){return vines;},
   get fogY(){return fogY;}, set fogY(v){fogY=v;},
+  get icicles(){return icicles;},
+  get ENEMY_HP(){return ENEMY_HP;},
+  isIce:()=>isIce(),
+  dropAllIcicles:()=>dropAllIcicles(),
+  drawIcicles:()=>drawIcicles(),
   drawFog:()=>drawFog(),
   get vineGrab(){return vineGrab;},
   get camY(){return camY;},
@@ -242,6 +249,10 @@ function run(opts){
       if(next) loop=next;
     }
   }
+  // a pointerdown at canvas coordinates, for the mission-select map
+  function click(x,y){
+    for(const fn of (listeners['pointerdown']||[])) fn({clientX:x,clientY:y});
+  }
   function keys(obj){
     // the game reads K[...] directly; reach it through a synthetic keydown
     for(const [code,down] of Object.entries(obj)){
@@ -252,7 +263,7 @@ function run(opts){
   if(!opts||!opts.map) g.startWorld(0);
   // the stubbed localStorage, so a scenario can prove something was actually
   // written rather than just mutated in memory
-  return {g,step,keys,sandbox,loadedImages,rafQueue,drawStats,
+  return {g,step,keys,click,sandbox,loadedImages,rafQueue,drawStats,
           store:sandbox.localStorage};
 }
 
@@ -1950,6 +1961,35 @@ function runSuite(){
   check('no cap fires into the underside of a shelf', blind===0, blindWhere||'clear');
   check('every cap has a ledge to land on', pointless===0, pointlessWhere||'ok');
 
+  // Every stage, not just the climb: a ledge nobody can reach is a level
+  // bug in any biome, and the check costs nothing to run across the table.
+  const JETPACK_UP=300, JETPACK_ACROSS=260;
+  const unreachable=[];
+  for(let li=0;li<g.LEVELS.length;li++){
+    const L=g.LEVELS[li];
+    const vs=L.vines||[];
+    const cs=L.platforms.filter(p=>p.bounce);
+    for(const hi of L.platforms){
+      if(hi.lavaPit||hi.bounce||hi.goal||hi.curtain) continue;
+      if(hi.y>=g.GROUND_Y) continue;                 // the floor itself
+      const below=L.platforms.filter(p=>p!==hi&&!p.lavaPit&&p.y>hi.y);
+      const near=(p,q)=>Math.max(0,Math.max(q.x-(p.x+p.w),p.x-(q.x+q.w)));
+      // The jetpack is always available and its fuel regenerates, so the
+      // honest ceiling for "can you get there at all" is the pack's climb,
+      // not a plain jump. Holding thrust rises at roughly 320px/s for about
+      // 1.8s of fuel; 300px of lift is a conservative bound. Measuring
+      // against the jump alone flagged eleven ledges across stages that have
+      // always been perfectly playable.
+      const byJump=below.some(p=>(p.y-hi.y)<=JETPACK_UP&&near(p,hi)<=JETPACK_ACROSS);
+      const byBounce=cs.some(c=>c.y>hi.y&&c.y-bounceUp<=hi.y&&near(c,hi)<=200);
+      const byVine=vs.some(v=>(v.y+(v.len||130))>hi.y&&
+                              Math.abs(v.x-(hi.x+hi.w/2))<=160);
+      if(!byJump&&!byBounce&&!byVine) unreachable.push('L'+li+' y'+hi.y+'@x'+hi.x);
+    }
+  }
+  check('no stage hides an unreachable ledge', unreachable.length===0,
+        unreachable.join(' ')||'all stages fine');
+
   // the climb's rungs have to be climbable without burning jetpack fuel on
   // every single one, and any gap wider than a jump must have a vine over it
   const climb=g.LEVELS[4];
@@ -2080,6 +2120,220 @@ function runSuite(){
   g.camX=0;
   g.drawPlatforms();
   check('the canopy exit renders', true);
+}
+
+// ── scenario 58: Frozen Peaks joins the map ──────────────────
+{
+  const {g,step}=run({map:true});
+  check('frozen peaks now owns a stage', g.WORLDS[2].levels.length===1,
+        g.WORLDS[2].levels.join(','));
+  check('it is still locked at the start', g.worldState(2).unlocked===false);
+  // clearing the canopy is what opens it
+  g.startWorld(0); g.finishWorld();        // volcano
+  g.startWorld(1); g.finishWorld();        // canopy
+  check('clearing the canopy unlocks the peaks', g.worldState(2).playable===true);
+  check('...and the final crater stays shut', g.worldState(3).unlocked===false);
+  check('the unlock is persisted', (g.worldProgress.frozen||{}).unlocked===true,
+        JSON.stringify(g.worldProgress.frozen));
+  check('the peaks can be started', g.startWorld(2)===true);
+  check('...which loads the ice stage', g.isIce()===true && g.levelIndex===6,
+        g.levelIndex);
+}
+
+// ── scenario 59: ice takes your grip away ────────────────────
+{
+  const {g,step}=run({map:true});
+  // enter a world first — loadLevel alone leaves STATE on the map screen,
+  // where update() returns early and nothing moves at all
+  g.startWorld(0);
+  const slideOn=(level)=>{
+    g.loadLevel(level);
+    g.player.hp=99; g.player.invuln=999;
+    step(5);
+    const floor=g.platforms.filter(p=>!p.lavaPit&&!p.goal&&p.y===g.GROUND_Y)[0];
+    g.player.x=floor.x+200; g.player.y=floor.y-g.PLAYER_H; g.player.vy=0;
+    for(let i=0;i<12;i++){ g.player.invuln=999; step(1); }   // settle
+    g.player.vx=200;
+    for(let i=0;i<14;i++){ g.player.invuln=999; step(1); }   // coast, no input
+    return Math.abs(g.player.vx);
+  };
+  const rock=slideOn(0);
+  const ice=slideOn(6);
+  check('rock sheds most of your speed in a quarter second', rock<120, rock.toFixed(1));
+  check('ice barely slows you at all', ice>160, ice.toFixed(1));
+  check('ice is markedly slipperier than rock', ice>rock*1.5,
+        'ice '+ice.toFixed(1)+' vs rock '+rock.toFixed(1));
+}
+
+// ── scenario 60: a chill round slows you ─────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99;
+  step(5);
+  check('nothing is chilled to start with', g.player.chilled<=0, g.player.chilled);
+  g.player.invuln=0;
+  g.lavaBalls.length=0;
+  g.lavaBalls.push({x:g.player.x+53/2, y:g.player.y+30, vx:0, vy:0,
+                    life:0, acid:true, chill:true});
+  for(let i=0;i<5 && g.player.chilled<=0;i++){ step(1); }
+  check('a chill round freezes your footing', g.player.chilled>0, g.player.chilled);
+  check('...and it wears off', true);
+  const before=g.player.chilled;
+  step(12);
+  check('the chill counts down', g.player.chilled<before,
+        before.toFixed(2)+' -> '+g.player.chilled.toFixed(2));
+  g.drawLavaBalls();
+  check('chill rounds render', true);
+}
+
+// ── scenario 61: the loaded ceiling ──────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the summit hangs icicles', g.icicles.length>=4, g.icicles.length);
+  check('they start hanging', g.icicles.every(i=>i.state==='hang'));
+  const ic=g.icicles[0];
+  // walk underneath it
+  const seen={};
+  for(let i=0;i<220 && ic.state!=='gone';i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=ic.x-53/2; g.player.y=380; g.player.vy=0;
+    step(1);
+    seen[ic.state]=true;
+  }
+  check('walking under one warns you first', !!seen.shake, Object.keys(seen).join(','));
+  check('...then it drops', !!seen.fall, Object.keys(seen).join(','));
+  check('...and shatters', ic.state==='gone', ic.state);
+  g.drawIcicles();
+  check('icicles render', true);
+  // and it grows back
+  for(let i=0;i<500 && ic.state==='gone';i++){
+    g.player.invuln=999; g.player.hp=99; g.player.x=60; step(1);
+  }
+  check('the ceiling reloads', ic.state==='hang', ic.state);
+}
+
+// ── scenario 62: the Titan brings the ceiling down ───────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the summit is guarded', !!g.boss && g.boss.name==='BUZUL TİTANI',
+        g.boss&&g.boss.name);
+  check('the Titan is the toughest boss yet', g.boss.maxHp===15, g.boss.maxHp);
+  check('it fights on the floor', g.boss.kind==='titan', g.boss.kind);
+
+  const hanging=g.icicles.filter(i=>i.state==='hang').length;
+  const dropped=g.dropAllIcicles();
+  check('a slam arms every icicle at once', dropped===hanging && hanging>0,
+        dropped+' of '+hanging);
+  check('...and none are left hanging',
+        g.icicles.filter(i=>i.state==='hang').length===0);
+
+  // the breath cycles: wind up, blow, stop
+  g.boss.introState='active';
+  g.boss.breathCooldown=0.01;
+  const phases={};
+  for(let i=0;i<220;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=g.boss.x-200; g.player.y=380;
+    step(1);
+    phases[g.boss.breathState]=true;
+  }
+  check('the breath winds up before it blows', !!phases.wind, Object.keys(phases).join(','));
+  check('...and then blows', !!phases.blow, Object.keys(phases).join(','));
+  check('a titan stays on the floor',
+        Math.abs(g.boss.y-(g.GROUND_Y-g.boss.h/2))<1, g.boss.y);
+  g.drawBoss();
+  check('the Titan renders', true);
+}
+
+// ── scenario 63: the ice roster ──────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  step(3);
+  check('sentries patrol the summit',
+        g.enemies.length>0 && g.enemies.every(e=>e.species==='ice_flyer'),
+        g.enemies.map(e=>e.species).join(','));
+  check('a sentry dies in two hits', g.enemies.every(e=>e.maxHp===2),
+        g.enemies.map(e=>e.maxHp).join(','));
+  const crushers=g.groundEnemies.filter(e=>e.species==='ice_crusher');
+  check('crushers hold the ledges', crushers.length>=2, crushers.length);
+  check('a crusher takes four', crushers.every(e=>e.maxHp===4),
+        crushers.map(e=>e.maxHp).join(','));
+  check('and it is armoured from the front', crushers.every(e=>e.shield===true));
+  g.drawPtero(g.enemies[0]);
+  g.drawGroundEnemy(crushers[0]);
+  check('the ice roster renders', true);
+}
+
+// ── scenario 64: the frozen hostage needs fire ───────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const wp of g.weaponPickups) wp.alive=false;
+  check('the summit holds one hostage', g.cages.length===1, g.cages.length);
+  check('...and it is frozen in', g.cages[0].species==='frozen', g.cages[0].species);
+  const cage=g.cages[0];
+  const aim=()=>{
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=cage.x-120; g.player.y=cage.y-24;
+    g.player.vx=0; g.player.vy=0;
+  };
+  // the plasma beam is useless against a block of ice
+  g.equipWeapon('spread'); g.weaponAmmo=99;
+  keys({KeyF:true});
+  for(let i=0;i<80;i++){ aim(); g.weaponAmmo=99; step(1); }
+  check('a beam will not melt it', cage.alive===true && g.followers.length===0,
+        'hp='+cage.hp.toFixed(2));
+  // FLAME does
+  g.equipWeapon('flame'); g.weaponAmmo=99;
+  for(let i=0;i<200 && cage.alive;i++){ aim(); g.weaponAmmo=99; step(1); }
+  keys({KeyF:false});
+  check('FLAME melts it out', cage.alive===false, cage.alive);
+  check('the hostage joins the train', g.followers.length===1, g.followers.length);
+  check('a thawed hatchling runs as an ordinary baby',
+        g.followers[0].species==='baby', g.followers[0].species);
+  check('the stage tally reads one of one',
+        g.rescuedThisLevel===1 && g.LEVELS[6].cages.length===1,
+        g.rescuedThisLevel+'/'+g.LEVELS[6].cages.length);
+}
+
+// ── scenario 65: picking a destination with the mouse ────────
+{
+  const {g,step,click}=run({map:true});
+  check('on the map', g.STATE==='map', g.STATE);
+  // A locked node that DOES own stages is the real test: clicking the empty
+  // crater proves nothing, because startWorld refuses a world with no levels
+  // whether or not the lock is checked.
+  const lockedWithStages=g.WORLDS[2];
+  check('the peaks are locked but do own a stage',
+        !g.worldState(2).unlocked && lockedWithStages.levels.length>0);
+  click(lockedWithStages.mx*900, lockedWithStages.my*506);
+  check('clicking a locked node does nothing', g.STATE==='map', g.STATE);
+  const empty=g.WORLDS[3];
+  click(empty.mx*900, empty.my*506);
+  check('clicking a node with no stages does nothing', g.STATE==='map', g.STATE);
+  // empty space does nothing either
+  click(10,10);
+  check('clicking empty space does nothing', g.STATE==='map', g.STATE);
+  // the open one starts
+  const open=g.WORLDS[0];
+  click(open.mx*900, open.my*506);
+  check('clicking an open node starts it', g.STATE==='playing', g.STATE);
+  check('...and it is the one that was clicked', g.worldIndex===0, g.worldIndex);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

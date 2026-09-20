@@ -82,6 +82,22 @@ Each stage names a **biome** with `theme`, and `THEMES` holds that biome's liqui
 
 **`forest_ground.png` is one block, not a tileable strip.** `drawForestCap` uses three bands of it — grass tufts (rows 348–425), the solid body (426–1065) and hanging vines (1074–1170) — and row **426 is blitted exactly at `p.y`**, the collision line. Tufts are drawn above that line and vines below a floating ledge, which is the only reason one block sprite can serve every platform width: the bands are scaled independently, horizontally by a fixed 96px tile and vertically by the platform. Moss is noise and takes non-uniform scaling without complaint. `forest_bg.png` is portrait, so it is scaled to the canvas height and mirror-tiled sideways at a fifth of the level's scroll speed.
 
+### Frozen Peaks
+
+The third world, and the first one whose biome changes how the dino *moves*. `THEMES.ice` carries `slip`, `snow` and `pitSpikes` alongside the usual colours, plus `bg` and `cap` — the backdrop and the platform sheet are ordinary theme fields now, so `drawBiomeBG()` and `drawForestCap()` serve every block-sheet biome and a fourth one is a table entry rather than two more globals and another draw function.
+
+**Slippery footing** lowers the acceleration and raises the coast: `grip` 3.2 instead of 10, `slide` 0.72 instead of 0.05. It reads `player.groundT < 0.12` rather than `player.onGround`, because a resting player's `onGround` flickers frame to frame and reading it directly gave ice back half its grip — the smoke test measured exactly that.
+
+**The chill** (`player.chilled`) halves top speed for a second. An ice sentry's round carries `chill:true` on an ordinary `lavaBalls` entry, so gravity, damage and cleanup were already written; the Titan's breath sets it too.
+
+**Icicles** hang from the ceiling until you walk under one: `ICICLE_WARN` of shaking, then they drop and shatter, then they reload. `dropAllIcicles()` arms every hanging one at once, which is what the Titan's slam calls.
+
+**The frozen hostage** is a cage with `species:"frozen"`: the plasma beam bounces off it and says so, and only FLAME melts it — the same "a weapon letter is a key" idea as the canopy's vine curtain. The sheet IS the block, so a thawed hatchling runs as an ordinary `baby`.
+
+**The Glacier Titan** is `kind:"titan"` — pinned to the floor like a walker, with a telegraphed horizontal freeze breath (`breathState`: none → wind → blow) and a slam that brings the ceiling down. It shatters rather than exploding.
+
+**The map is clickable.** A `pointerdown` maps client coordinates back through the canvas's CSS scale and starts the node under the cursor, gated on `worldState(i).playable`.
+
 ### Vertical traversal
 
 `camY` finally does something. It is how far the VIEW has lifted, and it is applied **once**, in `loop()`'s world transform — so nothing else in the file had to learn about vertical scroll. Two passes had to move out of that transform to stay screen-space: `drawBG()` (otherwise climbing drags a hole up from under the backdrop) and `drawFeverOverlay()`. A stage only lifts if it declares `camRise`, and `camY` eases back to zero everywhere else, so every pre-existing stage renders exactly as before.
@@ -89,6 +105,8 @@ Each stage names a **biome** with `theme`, and `THEMES` holds that biome's liqui
 **Refuelling has two special cases, and both had to be written by hand.** Hanging on a vine refuels the pack, because the vine branch returns early from `update()` and the ordinary regen only runs while `onGround` — which a vine forces false. A bouncy cap hands over a fixed `BOUNCE_FUEL` slug rather than a `dt`-scaled trickle, because contact lasts exactly one frame and a per-second rate gives the player essentially nothing.
 
 **Vines** are pendulums. Brushing a tip in mid-air grabs it, left/right pumps the swing, and jump releases with the tangential velocity (`cos/-sin` of the angle times `angVel*len`) plus a small lift — a released swing carries further than any jump, which is the point. While `vineGrab` is set, `update()` returns early: the pendulum owns the dino's position, so its own gravity and collision must not run. `vineCooldown` stops an instant re-grab.
+
+**Reachability is measured against the jetpack, not a plain jump.** The pack is always available and its fuel regenerates, so roughly 300px of lift and 260px of carry is the honest bound for "can you get there at all". Measuring against the 99px jump flagged eleven ledges across stages that have always been playable. The plain-jump rhythm check stays, but only for the climb, where the rungs are deliberately spaced.
 
 **Level geometry is checkable, so check it.** The reach numbers fall straight out of the constants: a plain jump rises `JUMP_VY²/(2·GRAV)` ≈ 99px and carries ≈ 166px across; a bouncy cap rises ≈ 295px. Two rules follow, and the suite enforces both for every stage. A cap needs **clear sky** — nothing may hang in the column it rises through, or the dino cracks its head on that platform's underside and the cap achieves nothing (this shipped once: the first CANOPY CLIMB cap sat directly under a shelf). And a cap needs **somewhere to land** inside its arc. For rungs, ask the order-independent question — can this one be arrived at from below, by jump, bounce or vine — rather than walking a y-sorted list pairwise, which quietly borrows a neighbour's vine when a rung moves sideways.
 
