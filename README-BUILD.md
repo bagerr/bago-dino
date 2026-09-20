@@ -52,10 +52,22 @@ https://<user>.github.io/<repo>/index2.html
 ```
 
 `.nojekyll` at the root is what stops Pages running the file list through
-Jekyll before serving it. The bare URL `…/<repo>/` serves the root
-`index.html`, which is the plain arcade build — RESCUE PROTOCOL is the deep
-link above. Touch controls detect the device on their own; `?touch=1` on the
-end forces them on for testing from a desktop.
+Jekyll before serving it.
+
+**The bare URL works too.** Pages answers `…/<repo>/` with `index.html` and
+with nothing else, so that name now holds a redirect to `index2.html` and the
+arcade build moved, byte for byte, to `arcade.html`. Both addresses open the
+current game:
+
+```
+https://<user>.github.io/<repo>/            → redirects
+https://<user>.github.io/<repo>/index2.html → direct
+```
+
+The redirect is done in script first so the query string survives, with a
+meta refresh behind it and a plain link behind that. Touch controls detect
+the device on their own; `?touch=1` on the end forces them on for testing
+from a desktop, and it survives the redirect.
 
 Rebuilding the bundle is not part of this route. Push a change and Pages
 picks it up; that is the whole deploy.

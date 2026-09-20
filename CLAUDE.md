@@ -8,7 +8,8 @@ This repository is a self-contained static HTML project with no build system, pa
 
 Two builds of the same game live here, both self-contained single-file HTML5 Canvas arcade platformers sharing the same sibling PNGs:
 
-- [index.html](index.html) — **NEON DINO-AGE**, the pure arcade build. Treat it as the stable baseline; it is the fallback if a story-mode change goes wrong.
+- [arcade.html](arcade.html) — **NEON DINO-AGE**, the pure arcade build. Treat it as the stable baseline; it is the fallback if a story-mode change goes wrong. It was called `index.html` until the repository started being served as a website: GitHub Pages answers a bare URL with `index.html` and nothing else, so that name now belongs to a three-line redirect page and the arcade build moved, byte for byte, to `arcade.html`.
+- [index.html](index.html) — not a build. A redirect to `index2.html` that keeps the query string, so `bagerr.github.io/bago-dino/` opens the current game. Do not run the smoke test against it.
 - [index2.html](index2.html) — **NEON DINO-AGE: RESCUE PROTOCOL**, the current build. Same engine plus the story layer (radio transmissions, the rescue train, the mission debrief). **New work goes here unless the request says otherwise.**
 
 The two files have drifted apart, so a fix that belongs in both has to be applied to both — there is no shared module to edit. Keep both on LF line endings. This bites in two ways: a Python rewrite on Windows silently converts the whole file to CRLF unless you pass `newline=''`, and this machine's git has `core.autocrlf=true` globally — either one breaks every exact-match patch anchor. [.gitattributes](.gitattributes) pins `*.html`/`*.js`/`*.md` to `eol=lf` and the repo sets `core.autocrlf=false` locally, so git is handled; the Python trap is still yours to avoid. A third one: **backslash escapes do not survive a bash heredoc here** — `[\\s\\S]` arrives as `[\s\S]` and a template literal then eats it down to `[sS]`. Write patch scripts to a file rather than piping them through a heredoc.
@@ -19,11 +20,11 @@ The project is a git repository (`main`, identity set locally to Bago / bagerrsa
 
 ## The game (both builds)
 
-A ~900×506 Canvas game rendered with plain 2D context calls — no framework, no build step, no external JS libraries. Everything (game logic, rendering, audio synthesis) lives in one `<script>` block. Sprite art is loaded from the sibling PNGs — `bagodino.png` (player), `baby.png` (the caged captive you rescue), `enemy_fly.png`/`enemy_ground.png` (regular enemies), `enemyboss.png` (final boss), `beam.png`/`beam_hyper.png` (laser), `lava_wall.png`/`lava_ceiling.png` (cave decor — **index.html only now**), and in index2.html `portal.png` (the evacuation rift) and `ground.png` (the walking surface) — so do not rename these files without updating their `new Image().src` assignments.
+A ~900×506 Canvas game rendered with plain 2D context calls — no framework, no build step, no external JS libraries. Everything (game logic, rendering, audio synthesis) lives in one `<script>` block. Sprite art is loaded from the sibling PNGs — `bagodino.png` (player), `baby.png` (the caged captive you rescue), `enemy_fly.png`/`enemy_ground.png` (regular enemies), `enemyboss.png` (final boss), `beam.png`/`beam_hyper.png` (laser), `lava_wall.png`/`lava_ceiling.png` (cave decor — **arcade.html only now**), and in index2.html `portal.png` (the evacuation rift) and `ground.png` (the walking surface) — so do not rename these files without updating their `new Image().src` assignments.
 
 **About the boss art.** `boss_stage1.jpg` and `boss_stage2.jpg` are WebP despite the extension, and `boss_stage1_rage.src.png` is a PNG with no alpha channel at all — all three arrived with an opaque white background. The keyed, cropped, alpha versions the game actually loads are `boss_stage1.png`, `boss_stage2.png` and `boss_stage1_rage.png`, produced by the same WIC recipe as `portal.png`. Keep the sources; regenerate rather than pointing a sprite at a raw drop.
 
-**About the terrain.** index2.html no longer draws `lava_wall.png` or `lava_ceiling.png` at all. The left-edge lava seam, the two procedural "lava falls" pinned at world x=0 and x=1100, the near-foreground obsidian outcrop layer (which scrolled at 0.92× and therefore read as a dark column hanging under every floating ledge) and the translucent orange box that used to mark each lava pit are all gone. index.html still uses them; do not "restore" any of it in index2.html.
+**About the terrain.** index2.html no longer draws `lava_wall.png` or `lava_ceiling.png` at all. The left-edge lava seam, the two procedural "lava falls" pinned at world x=0 and x=1100, the near-foreground obsidian outcrop layer (which scrolled at 0.92× and therefore read as a dark column hanging under every floating ledge) and the translucent orange box that used to mark each lava pit are all gone. arcade.html still uses them; do not "restore" any of it in index2.html.
 
 **About `ground.png`.** It is a 1024×1024 RGBA sheet: transparent down to row ~176, ragged spires from there, **fully opaque from row 424**, two bright molten seams (rows ~432 and ~536), then a mirrored hanging-rock underside that fades out past row ~656. `drawGroundCap()` uses the band starting at row 424 precisely because that is the first fully opaque row, which gives the strip a clean flat top edge — and that edge is drawn at exactly `p.y`, the same line the collision resolver stands the player on, so the dino's feet touch the texture instead of hovering over it. Do not move `GROUND_SRC_Y` up into the spires without also deciding what happens to that guarantee. The strip is **mirror-tiled** (every other tile flipped horizontally) because the art is not seamless; two flipped copies share an identical edge, so the repeat is invisible. Tile phase is anchored to world x, not screen x, or the texture swims when the camera scrolls.
 
@@ -49,9 +50,11 @@ Inlined art also stops tainting the canvas the way a `file://` image does, so `c
 
 ```
 node smoke-test.js                    # tests index2.html — the default
-node smoke-test.js index.html         # or any other build
+node smoke-test.js arcade.html        # the arcade build (see the caveat below)
 node smoke-test.js neon-dino-age.html # including the bundle you are about to send
 ```
+
+**The suite does not pass against `arcade.html`, and never did.** That build predates the world map, so every scenario that enters a stage through `startWorld()` dies on an undefined reference. The harness runs against any file you hand it; what it cannot do is test a build that is missing the systems the scenarios are written for. Treat `arcade.html` as a frozen artefact, not as something the suite covers.
 
 Run it against the bundle before sending one: it proves the file actually works rather than merely that it built. The harness concatenates **every** `<script>` block, because the bundle keeps its inlined art in a tag of its own.
 
@@ -93,7 +96,7 @@ Two more traps worth knowing before writing a scenario:
 
 The shape that works: drive real frames through `loop()`, assert on state through the `__g` accessor, and call the draw functions directly (`drawRadio`, `drawMissionReport`, `drawArenaBanners`, `drawPlatforms`, `drawWin`, `drawGameOver`) so the render paths are exercised even though the stubbed context draws nothing.
 
-A quick syntax-only check: `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"`.
+A quick syntax-only check: `node -e "new Function(require('fs').readFileSync('index2.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"`.
 
 ### Worlds, stages and biomes
 
