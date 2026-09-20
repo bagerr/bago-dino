@@ -982,7 +982,8 @@ const LEVELS = [
     ],
     powerBoxes:[{x:470,y:250},{x:1130,y:200}],
     // the flame has to come before the frozen hostage
-    weapons:[{x:230,y:300,kind:"flame"},{x:980,y:250,kind:"spread"}],
+    weapons:[{x:230,y:300,kind:"flame"},{x:700,y:250,kind:"freeze"},
+             {x:980,y:250,kind:"spread"}],
     cages:[{x:1190,y:226,species:"frozen"}],
     escapeLine:"BUZ ZİRVELERİNDEN İNİLDİ",
     checkpoint:1050, parTime:110,
@@ -1432,7 +1433,13 @@ const WEAPONS={
   rocket: {letter:"R", label:"ROCKET POD",  color:"#ff4477", ammo:5.0},
   flame:  {letter:"F", label:"FLAME SHRED", color:"#ffaa22", ammo:5.0},
   seed:   {letter:"T", label:"SİSMİK TOHUM",color:"#22c55e", ammo:5.5},
+  // Not a damage weapon at all: it turns a living enemy into scenery. A
+  // frozen one is inert, is a platform you can stand on, and shatters into
+  // shards that cut down whatever is standing near it.
+  freeze: {letter:"D", label:"DONDURUCU",   color:"#7dd3fc", ammo:6.0},
 };
+const FREEZE_TO_SOLID=0.8;   // seconds of beam to lock one up
+const FROZEN_SECONDS=6;      // how long it stays a block
 let weapon="beam";
 let weaponAmmo=Infinity;
 let rocketCd=0;
@@ -2292,8 +2299,16 @@ function updateIcicles(dt){
   const pcx=player.x+PLAYER_W/2;
   for(const ic of icicles){
     if(ic.state==="hang"){
+      // Shoot one down on purpose. No warning shake — it is your shot, you
+      // already know it is coming, and dropping one on the armoured top of a
+      // crusher is the point.
+      if(laser && icicleInBeam(ic)){
+        ic.state="fall"; ic.vy=160;
+        spawnParticles(ic.x-camX,ic.y,8,["#dff6ff","#7dd3fc"],
+          {minSpd:40,maxSpd:150,minLife:0.15,maxLife:0.4,type:"square",gravity:200,minSz:1,maxSz:3});
+      }
       // armed by the player walking underneath it
-      if(Math.abs(pcx-ic.x)<26 && player.y>ic.y){ ic.state="shake"; ic.timer=ICICLE_WARN; }
+      else if(Math.abs(pcx-ic.x)<26 && player.y>ic.y){ ic.state="shake"; ic.timer=ICICLE_WARN; }
     } else if(ic.state==="shake"){
       ic.timer-=dt;
       if(ic.timer<=0){ ic.state="fall"; ic.vy=120; }
@@ -2303,6 +2318,25 @@ function updateIcicles(dt){
       if(player.invuln<=0 &&
          Math.abs(pcx-ic.x)<20 && Math.abs((player.y+PLAYER_H/2)-ic.y)<38){
         takeDamage("enemy");
+        shatterIcicle(ic);
+        continue;
+      }
+      // a falling spike lands on enemies too, and it lands on TOP — which is
+      // the side a crusher's armour does not cover
+      let struck=null;
+      for(const e of [...enemies,...groundEnemies]){
+        if(e.dead||e.dying) continue;
+        if(Math.abs((e.x+e.w/2)-ic.x)<e.w/2+14 && Math.abs((e.y+e.h/2)-ic.y)<e.h/2+20){
+          struck=e; break;
+        }
+      }
+      if(struck){
+        if(struck.frozen>0) shatterFrozen(struck);
+        else {
+          struck.hp-=3; struck.hitFlash=0.3;
+          spawnFloatingText(struck.x+struck.w/2-camX,struck.y-12,"BUZ!","#bae6fd",14);
+          if(struck.hp<=0&&!struck.dying){ struck.dying=true; struck.deathTimer=0.07; }
+        }
         shatterIcicle(ic);
         continue;
       }
@@ -2318,6 +2352,16 @@ function updateIcicles(dt){
       if(ic.timer<=0){ ic.state="hang"; ic.y=ic.baseY; ic.vy=0; }
     }
   }
+}
+// the beam test for a hanging icicle, in the same terms inLaserSweep uses
+function icicleInBeam(ic){
+  if(!laser) return false;
+  const reach=laser.mouthX+laser.dir*laser.len;
+  const withinX = laser.dir>0 ? (ic.x>=laser.mouthX&&ic.x<=reach)
+                              : (ic.x<=laser.mouthX&&ic.x>=reach);
+  if(!withinX) return false;
+  const ys=laser.ys||[laser.mouthY];
+  return ys.some(ly=>Math.abs(ly-ic.y)<40);
 }
 function shatterIcicle(ic){
   ic.state="gone"; ic.timer=ICICLE_RESPAWN;
@@ -3199,7 +3243,27 @@ function drawDeathFlash(w,h){
 }
 
 // ─── DRAW FLYING ENEMY (enemy1.png, 56×38) ────────────────────
+function drawFrozenShell(e){
+  const cx=e.x+e.w/2-camX, cy=e.y+e.h/2;
+  const fade=clamp(e.frozen/1.2,0,1);     // flickers as it is about to thaw
+  if(fade<1 && Math.sin(t*22)<-0.2) return;
+  ctx.save();
+  ctx.globalCompositeOperation="lighter";
+  ctx.globalAlpha=0.42;
+  ctx.fillStyle="#7dd3fc";
+  ctx.fillRect(cx-e.w/2-3,cy-e.h/2-3,e.w+6,e.h+6);
+  ctx.restore();
+  glow("#bae6fd",10);
+  ctx.strokeStyle="rgba(223,246,255,0.95)"; ctx.lineWidth=2;
+  ctx.strokeRect(cx-e.w/2-3,cy-e.h/2-3,e.w+6,e.h+6);
+  // a couple of fracture lines so it reads as ice rather than a tint
+  ctx.beginPath();
+  ctx.moveTo(cx-e.w/2,cy-e.h/4); ctx.lineTo(cx,cy+e.h/6); ctx.lineTo(cx+e.w/3,cy-e.h/3);
+  ctx.stroke();
+  noGlow();
+}
 function drawPtero(e){
+  if(e.frozen>0){ drawFrozenShell(e); }
   if(e.species){
     // the dragonfly: registry art, mirrored to its heading, with a green
     // shimmer under it so it reads against the dark canopy
@@ -3260,6 +3324,7 @@ function drawPtero(e){
 
 // ─── DRAW GROUND ENEMY (enemyground.png, 40×40) ───────────────
 function drawGroundEnemy(e){
+  if(e.frozen>0){ drawFrozenShell(e); }
   if(e.species){
     const cx=e.x+e.w/2-camX, cy=e.y+e.h/2;
     if(e.hitFlash>0) ctx.globalAlpha=0.55+0.45*Math.sin(e.hitFlash*30);
@@ -5108,6 +5173,18 @@ function update(dt){
       }
     }
   }
+  // a frozen enemy is solid ground while it lasts
+  for(const b of frozenBlocks()){
+    const prev_y=player.y-player.vy*dt;
+    if(!overlaps({x:player.x,y:player.y,w:PLAYER_W,h:PLAYER_H},
+                 {x:b.x,y:b.y,w:b.w,h:b.h})) continue;
+    const tol=Math.max(8,Math.abs(player.vy*dt)+2);
+    if(player.vy>0 && prev_y+PLAYER_H<=b.y+tol){
+      player.y=b.y-PLAYER_H;
+      player.vy=0;
+      onAnyGround=true;
+    }
+  }
   player.onGround=onAnyGround;
   player.groundT=onAnyGround?0:player.groundT+dt;
 
@@ -5129,7 +5206,7 @@ function update(dt){
   // spawning discrete projectile shots
   const hyperActive=player.activePower&&player.activePower.kind==="hyper";
   const isSpread=weapon==="spread", isFlame=weapon==="flame", isRocket=weapon==="rocket";
-  const isSeed=weapon==="seed";
+  const isSeed=weapon==="seed", isFreeze=weapon==="freeze";
   // SPREAD and FLAME are wide by nature, so they punch through everything
   // they touch the same way the PLASMA PIERCE buff does
   const piercing=(player.activePower&&player.activePower.kind==="pierce")||isSpread||isFlame;
@@ -5154,10 +5231,11 @@ function update(dt){
     let thickness=feverMode?16:8;
     if(hyperActive) thickness*=2;
     if(isFlame) thickness*=2.2;      // a fat, close-range cone
+    if(isFreeze) thickness*=1.4;
     if(isSpread) thickness*=0.8;     // three thinner lances instead of one bar
     // FEVER MODE turns the laser into a screen-spanning Hyper-Beam instead of
     // the normal ~520px reach; FLAME trades nearly all of it away
-    const maxRange=isFlame?190:(feverMode?2000:520);
+    const maxRange=isFlame?190:(isFreeze?300:(feverMode?2000:520));
     // SPREAD fires three parallel lances, so a flyer overhead and a grounder
     // below die to the same trigger pull
     const rayOffsets=isSpread?[-34,0,34]:[0];
@@ -5214,6 +5292,10 @@ function update(dt){
       !!e.shield && !e.dying && !e.dead && player.facing!==headingOf(e);
 
     const applyBeamDamage=(e)=>{
+      // A frozen target is glass: any hit at all shatters it, and the shards
+      // take out whatever is standing nearby. That is the payoff for
+      // spending the ammo to freeze something in the first place.
+      if(e.frozen>0){ shatterFrozen(e); return; }
       if(shieldBlocks(e)){
         // ricochet: emerald sparks off the spines, no damage
         e.beamTick=(e.beamTick||0)-dt;
@@ -5234,6 +5316,15 @@ function update(dt){
       );
       // damage ticks on an interval rather than instantly deleting the enemy —
       // fever halves the interval and doubles damage; HYPER BEAM maxes it out
+      // DONDURUCU does not damage: it builds up until the thing locks solid
+      if(isFreeze){
+        e.freeze=(e.freeze||0)+dt;
+        if(Math.random()<0.5) spawnParticles(
+          e.x+e.w/2-camX, e.y+rnd(0,e.h), 1, ["#dff6ff","#7dd3fc","#ffffff"],
+          {minSpd:20,maxSpd:80,minLife:0.15,maxLife:0.4,type:"square",gravity:60,minSz:1,maxSz:3});
+        if(e.freeze>=FREEZE_TO_SOLID) freezeSolid(e);
+        return;
+      }
       e.beamTick=(e.beamTick||0)-dt;
       if(e.beamTick<=0){
         if(hyperActive){
@@ -5290,6 +5381,13 @@ function update(dt){
   // ── update enemies ──
   for(const e of enemies){
     if(e.dead) continue;
+
+    if(e.frozen>0){
+      // inert: no AI, no contact damage, just a block on a timer
+      e.frozen-=dt;
+      if(e.frozen<=0){ e.frozen=0; e.vx=e.frozenVx||e.vx; }
+      continue;
+    }
 
     // dying enemies freeze in place for one bright flash frame before the real kill fires
     if(e.dying){
@@ -5371,6 +5469,12 @@ function update(dt){
   // ── update ground patrollers ──
   for(const e of groundEnemies){
     if(e.dead) continue;
+
+    if(e.frozen>0){
+      e.frozen-=dt;
+      if(e.frozen<=0){ e.frozen=0; e.vx=e.frozenVx||e.vx; }
+      continue;
+    }
 
     if(e.dying){
       e.deathTimer-=dt;
@@ -6068,6 +6172,50 @@ function addChain(n){
       {minSpd:100,maxSpd:300,minLife:0.4,maxLife:1.0,type:"square",gravity:60,minSz:3,maxSz:8});
     spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-40,"FEVER!","#ff2fb0",22);
   }
+}
+
+// Locks an enemy solid. It stops thinking, stops hurting you on contact,
+// and becomes something you can stand on.
+function freezeSolid(e){
+  if(e.frozen>0||e.dead||e.dying) return;
+  e.frozen=FROZEN_SECONDS;
+  e.freeze=0;
+  e.frozenVx=e.vx; e.vx=0;
+  playChime(chain);
+  spawnFloatingText(e.x+e.w/2-camX,e.y-14,"DONDU!","#7dd3fc",15);
+  spawnParticles(e.x+e.w/2-camX,e.y+e.h/2,18,["#dff6ff","#7dd3fc","#bae6fd"],
+    {minSpd:50,maxSpd:190,minLife:0.25,maxLife:0.6,type:"square",gravity:120,minSz:2,maxSz:5});
+}
+// Hitting a frozen enemy blows it apart, and the shards cut down anything
+// standing near it — a frozen crusher in a crowd is a bomb.
+function shatterFrozen(e){
+  if(!(e.frozen>0)) return;
+  e.frozen=0;
+  const cx=e.x+e.w/2, cy=e.y+e.h/2;
+  spawnParticles(cx-camX,cy,26,["#dff6ff","#7dd3fc","#bae6fd","#ffffff"],
+    {minSpd:110,maxSpd:340,minLife:0.3,maxLife:0.8,type:"square",gravity:260,minSz:2,maxSz:6});
+  screenShake=Math.min(6,screenShake+4);
+  hitStopTimer=Math.max(hitStopTimer,0.05);
+  playExplosion();
+  spawnFloatingText(cx-camX,cy-18,"PARÇALANDI!","#bae6fd",15);
+  e.hp=0;
+  if(!e.dying){ e.dying=true; e.deathTimer=0.05; }
+  for(const o of [...enemies,...groundEnemies]){
+    if(o===e||o.dead||o.dying) continue;
+    if(Math.hypot((o.x+o.w/2)-cx,(o.y+o.h/2)-cy)<95){
+      o.hp-=2; o.hitFlash=0.25;
+      if(o.hp<=0&&!o.dying){ o.dying=true; o.deathTimer=0.07; }
+    }
+  }
+}
+// every frozen thing on the stage, as a platform-shaped box
+function frozenBlocks(){
+  const out=[];
+  for(const e of [...enemies,...groundEnemies]){
+    if(e.dead||e.dying||!(e.frozen>0)) continue;
+    out.push(e);
+  }
+  return out;
 }
 
 function killEnemy(e){

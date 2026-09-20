@@ -146,6 +146,11 @@ function run(opts){
   drawTouchPad:()=>drawTouchPad(),
   assetURL:(n)=>assetURL(n),
   dropAllIcicles:()=>dropAllIcicles(),
+  frozenBlocks:()=>frozenBlocks(),
+  freezeSolid:(e)=>freezeSolid(e),
+  shatterFrozen:(e)=>shatterFrozen(e),
+  get FROZEN_SECONDS(){return FROZEN_SECONDS;},
+  get FREEZE_TO_SOLID(){return FREEZE_TO_SOLID;},
   drawIcicles:()=>drawIcicles(),
   drawFog:()=>drawFog(),
   get vineGrab(){return vineGrab;},
@@ -2454,6 +2459,190 @@ function runSuite(){
     check('an unknown name is passed through untouched',
           g.assetURL('nope.png')==='nope.png', g.assetURL('nope.png'));
   }
+}
+
+// ── scenario 69: D — DONDURUCU ───────────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const wp of g.weaponPickups) wp.alive=false;
+  check('the ice world stocks its own letter', !!g.WEAPONS.freeze,
+        Object.keys(g.WEAPONS).join(','));
+  check('it is D for dondurucu', g.WEAPONS.freeze.letter==='D', g.WEAPONS.freeze.letter);
+
+  // pick one target and silence the rest
+  const target=g.enemies[0];
+  for(let i=1;i<g.enemies.length;i++) g.enemies[i].dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  target.dead=false; target.dying=false; target.hp=99;
+  const hp0=target.hp;
+
+  g.equipWeapon('freeze'); g.weaponAmmo=99;
+  keys({KeyF:true});
+  const hold=()=>{
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=400; g.player.y=300; g.player.vx=0; g.player.vy=0;
+    target.x=g.player.x+150; target.y=g.player.y; target.baseY=target.y;
+    g.weaponAmmo=99;
+  };
+  for(let i=0;i<90 && !(target.frozen>0);i++){ hold(); step(1); }
+  keys({KeyF:false});
+  check('the beam locks an enemy solid', target.frozen>0, target.frozen);
+  check('...without damaging it', target.hp===hp0, hp0+' -> '+target.hp);
+  check('a frozen enemy stops moving', target.vx===0, target.vx);
+  check('it counts as a block', g.frozenBlocks().length===1, g.frozenBlocks().length);
+  g.drawPtero(target);
+  check('the ice shell renders', true);
+}
+
+// ── scenario 70: standing on what you froze ─────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const block=g.enemies[0];
+  for(let i=1;i<g.enemies.length;i++) g.enemies[i].dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  block.dead=false; block.dying=false;
+  // open air: no stage platform at this x and height, so the only thing
+  // that can hold the dino up here is the frozen enemy itself
+  block.x=350; block.y=300; block.baseY=300;
+  g.freezeSolid(block);
+  check('frozen', block.frozen>0);
+  check('nothing else is up here to stand on',
+        !g.platforms.some(p=>!p.lavaPit&&Math.abs(p.y-block.y)<6&&
+                             p.x<block.x+block.w&&p.x+p.w>block.x));
+  // drop onto it
+  g.player.x=block.x+block.w/2-26;
+  g.player.y=block.y-g.PLAYER_H-30;
+  g.player.vx=0; g.player.vy=120;
+  let landed=false;
+  for(let i=0;i<20 && !landed;i++){
+    g.player.invuln=999;
+    block.x=350; block.y=300; block.baseY=300; block.frozen=9;
+    step(1);
+    if(g.player.onGround && Math.abs((g.player.y+g.PLAYER_H)-block.y)<2) landed=true;
+  }
+  check('a frozen enemy holds your weight', landed,
+        (g.player.y+g.PLAYER_H).toFixed(1)+' vs '+block.y);
+  check('...and does not hurt you standing on it', g.player.hp===99, g.player.hp);
+}
+
+// ── scenario 71: shattering one ─────────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const block=g.enemies[0], bystander=g.enemies[1];
+  for(const e of g.groundEnemies) e.dead=true;
+  for(let i=2;i<g.enemies.length;i++) g.enemies[i].dead=true;
+  block.dead=false; block.dying=false; block.hp=99;
+  bystander.dead=false; bystander.dying=false; bystander.hp=99;
+  // 1. a beam hit shatters it. The bystander is parked far away for this
+  //    half, because a piercing beam would otherwise answer for the shards.
+  block.x=500; block.y=300; block.baseY=300;
+  bystander.x=1400; bystander.y=180; bystander.baseY=180;
+  g.freezeSolid(block);
+  g.equipWeapon('spread'); g.weaponAmmo=99;
+  keys({KeyF:true});
+  for(let i=0;i<40 && !block.dying;i++){
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=330; g.player.y=block.y; g.player.vx=0; g.player.vy=0;
+    block.x=500; block.y=300; block.baseY=300; block.frozen=9;
+    g.weaponAmmo=99;
+    step(1);
+  }
+  keys({KeyF:false});
+  check('one hit shatters a frozen enemy', block.dying===true||block.dead===true,
+        'dying='+block.dying);
+
+  // 2. the blast itself, with no beam in the picture at all
+  const b2=g.enemies[1];
+  b2.dead=false; b2.dying=false; b2.hp=99;
+  block.dying=false; block.dead=false; block.hp=99;
+  block.x=500; block.y=300; block.baseY=300;
+  b2.x=530; b2.y=330; b2.baseY=330;
+  g.freezeSolid(block);
+  const nearHp=b2.hp;
+  g.shatterFrozen(block);
+  check('the shards cut down what stood beside it', b2.hp<nearHp,
+        nearHp+' -> '+b2.hp);
+  check('...and the block itself is gone', block.dying===true||block.dead===true);
+
+  // something far away is untouched, so the radius is a radius
+  // this scenario killed every grounder up front, so bring one back rather
+  // than filtering for a survivor and silently skipping the check
+  const far=g.groundEnemies[0];
+  if(far){
+    far.dead=false; far.dying=false; far.hp=4;
+    far.x=1500; far.y=g.GROUND_Y-far.h;
+    const farHp=far.hp;
+    block.dying=false; block.dead=false; block.hp=99;
+    g.freezeSolid(block);
+    g.shatterFrozen(block);
+    check('a shatter does not reach across the stage', far.hp===farHp,
+          farHp+' -> '+far.hp);
+  }
+}
+
+// ── scenario 72: shooting the ceiling down on them ──────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const wp of g.weaponPickups) wp.alive=false;
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const ic=g.icicles[0];
+  check('it is hanging', ic.state==='hang', ic.state);
+
+  // stand well clear of it and shoot it
+  g.equipWeapon('spread'); g.weaponAmmo=99;
+  keys({KeyF:true});
+  for(let i=0;i<40 && ic.state==='hang';i++){
+    g.player.invuln=999; g.player.facing=1;
+    g.player.x=ic.x-260; g.player.y=ic.y-24;
+    g.player.vx=0; g.player.vy=0;
+    g.weaponAmmo=99;
+    step(1);
+  }
+  keys({KeyF:false});
+  check('a hanging icicle can be shot down', ic.state!=='hang', ic.state);
+  check('...and it drops without the warning shake', ic.state!=='shake', ic.state);
+
+  // and a falling one lands on an enemy — on its TOP, where armour is not
+  const victim=g.groundEnemies.filter(e=>e.species==='ice_crusher')[0];
+  victim.dead=false; victim.dying=false; victim.hp=4;
+  const ic2=g.icicles.find(i=>i.state==='hang');
+  // Stand it on the first surface under that icicle, not on the distant
+  // floor: a spike shatters on the first solid thing it meets, so a ledge in
+  // between means it never reaches the ground at all.
+  let deck=g.GROUND_Y;
+  for(const p of g.platforms){
+    if(p.lavaPit||p.gone) continue;
+    if(ic2.x>p.x && ic2.x<p.x+p.w && p.y<deck && p.y>ic2.y) deck=p.y;
+  }
+  const place=()=>{
+    victim.x=ic2.x-victim.w/2; victim.y=deck-victim.h;
+    victim.patrolMin=victim.x; victim.patrolMax=victim.x; victim.vx=0;
+  };
+  place();
+  ic2.state='fall'; ic2.vy=200;
+  for(let i=0;i<60 && victim.hp===4;i++){
+    g.player.invuln=999; g.player.x=60;
+    place();
+    step(1);
+  }
+  check('a dropped icicle hits the armoured crusher on top', victim.hp<4, victim.hp);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
