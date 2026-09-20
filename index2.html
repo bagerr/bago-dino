@@ -992,6 +992,58 @@ const LEVELS = [
           sprite:"boss_frozen.png",
           name:"BUZUL TİTANI", title:"ZİRVENİN SON BEKÇİSİ"},
   },
+  { // ── STAGE 8 — Whiteout Ridge (Frozen Peaks, the approach)
+    // Built around the wind. The two pits are narrow enough to clear from a
+    // standstill and the ledges between them are wide, because the stage's
+    // question is not "can you make this jump" but "are you standing
+    // somewhere you can afford to be pushed from when the gust lands".
+    name:"WHITEOUT RIDGE", theme:"ice",
+    width:1500,
+    wind:{speed:175, rate:1.9, warn:1.0, blow:2.0, calmMin:3.2, calmMax:5},
+    platforms:[
+      {x:-200,y:GROUND_Y,w:540,h:76},
+      {x:340, y:GROUND_Y,w:140,h:76,lavaPit:true},
+      {x:480, y:GROUND_Y,w:280,h:76},
+      {x:760, y:GROUND_Y,w:150,h:76,lavaPit:true},
+      {x:910, y:GROUND_Y,w:590,h:76},
+      {x:150, y:348,w:130,h:18},
+      {x:440, y:300,w:140,h:18},
+      {x:700, y:252,w:140,h:18},
+      {x:960, y:300,w:140,h:18},
+      {x:1190,y:252,w:130,h:18},
+      {x:1350,y:346,w:150,h:18,goal:true},
+    ],
+    lavaPits:[{x:340,w:140},{x:760,w:150}],
+    icicles:[{x:300,y:66},{x:520,y:58},{x:780,y:70},{x:1020,y:60},{x:1240,y:68}],
+    crystals:[{x:1080,y:370},{x:1130,y:380}],
+    coins:()=>[
+      ...coinArcOver(150,348,130,4),
+      ...coinArcOver(440,300,140,5),
+      ...coinArcOver(700,252,140,5),
+      ...coinArcOver(960,300,140,5),
+      ...coinArcOver(1190,252,130,4),
+      ...coinArc(325,330,495,330,4,60),
+      ...coinArc(745,330,925,330,4,60),
+    ],
+    flyers:[
+      {x:560,y:150,patrol:[440,880], spd:74,species:"ice_flyer"},
+      {x:1060,y:142,patrol:[930,1300],spd:82,species:"ice_flyer"},
+    ],
+    grounders:[
+      {platX:480,platW:280,spd:42,species:"ice_crusher"},
+      {platX:910,platW:590,spd:46,species:"ice_crusher"},
+    ],
+    powerBoxes:[{x:440,y:250},{x:1190,y:202}],
+    // the flame is the last letter before the frozen hostage, on purpose:
+    // nothing else thaws a block of ice
+    weapons:[{x:210,y:306,kind:"freeze"},{x:740,y:210,kind:"rocket"},
+             {x:1000,y:258,kind:"flame"}],
+    cages:[{x:1250,y:226,species:"frozen"}],
+    escapeLine:"TİPİNİN İÇİNDEN GEÇİLDİ",
+    checkpoint:960, parTime:105,
+    arena:null,
+    boss:null,
+  },
 ];
 
 // ─── WORLDS (the mission select map) ──────────────────────────
@@ -1003,7 +1055,7 @@ const WORLDS=[
    mx:0.17, my:0.66, color:"#ff6a2a"},
   {id:"forest",  name:"TOXIC CANOPY", sub:"ZEHİRLİ ÇATI",    levels:[3,5,4],
    mx:0.40, my:0.33, color:"#10b981"},
-  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[6],
+  {id:"frozen",  name:"FROZEN PEAKS", sub:"DONMUŞ ZİRVELER", levels:[7,6],
    mx:0.63, my:0.62, color:"#7dd3fc"},
   {id:"cyber",   name:"CYBER CRATER", sub:"SİBER KRATER",    levels:[],
    mx:0.85, my:0.30, color:"#c084fc"},
@@ -2218,6 +2270,94 @@ function finishWorld(){
   playPowerUp();
 }
 
+// ─── THE BLIZZARD ─────────────────────────────────────────────
+// A stage can declare `wind`: gusts that blow across it on a cycle — calm,
+// a telegraphed warning, then a couple of seconds of real sideways pressure.
+// It is the horizontal answer to the canopy's rising fog, and it only means
+// anything on ice, where you cannot plant your feet and stop.
+//
+// The gust is modelled as drag toward a wind speed, not as a raw force: an
+// unopposed dino is carried up to `speed` and no further, so the shove can
+// never fling anyone across the level. And it only ever ACCELERATES you
+// downwind — running with the wind faster than the wind is not braked, which
+// would read as a bug rather than as weather.
+let windState="off", windTimer=0, windDir=-1;
+function initWind(){
+  const w=LEVELS[levelIndex].wind;
+  windState = w ? "calm" : "off";
+  windTimer = w ? rnd(1.5,3) : 0;
+  windDir   = -1;
+}
+function applyWind(dt){
+  const w=LEVELS[levelIndex].wind;
+  if(!w||windState!=="blow") return;
+  const target=windDir*(w.speed||170);
+  if((target-player.vx)*windDir>0)
+    player.vx += (target-player.vx)*Math.min(1,dt*(w.rate||1.9));
+}
+function updateWind(dt){
+  const w=LEVELS[levelIndex].wind;
+  if(!w){ windState="off"; return; }
+  windTimer-=dt;
+  if(windState==="calm"&&windTimer<=0){
+    // the direction is chosen at the warning, never at the gust, so the
+    // arrow you are shown is always the way you are about to be pushed
+    windDir=Math.random()<0.5?-1:1;
+    windState="warn"; windTimer=w.warn||1;
+    playRadioBeep(true);
+    // the first gust of the stage explains itself; after that the arrow and
+    // the whiteout are the whole language
+    queueRadio("storm","TİPİ ALARMI",
+      ["Şiddetli rüzgâr yaklaşıyor.","Ok yönünde savrulacaksın —",
+       "sağlam zemine geç!"],
+      {color:"#7dd3fc",urgent:true,hold:3.4});
+  } else if(windState==="warn"&&windTimer<=0){
+    windState="blow"; windTimer=w.blow||2;
+    screenShake=Math.min(6,screenShake+3);
+  } else if(windState==="blow"&&windTimer<=0){
+    windState="calm"; windTimer=rnd(w.calmMin||3.2,w.calmMax||5);
+  }
+  if(windState==="blow"&&Math.random()<dt*70){
+    // snow torn across the screen, so the gust is visible in the air and not
+    // only in how the dino moves. Particles live in screen space.
+    particles.push({
+      x: windDir>0?-10:W+10, y: rnd(0,H-60),
+      vx: windDir*rnd(430,780), vy: rnd(-30,60),
+      life:1, maxLife:rnd(0.5,1.1),
+      color: Math.random()<0.5?"#ffffff":"#bfe6ff",
+      size: rnd(1,3), type:"square", gravity:0
+    });
+  }
+}
+function drawWind(){
+  if(windState==="off"||windState==="calm") return;
+  const blowing=windState==="blow";
+  const pulse=0.5+0.5*Math.sin(t*(blowing?14:9));
+  ctx.save();
+  // a white-out crawling in from the side it blows from
+  const g = windDir>0 ? ctx.createLinearGradient(0,0,W*0.45,0)
+                      : ctx.createLinearGradient(W,0,W*0.55,0);
+  const a=(blowing?0.16:0.07)+0.06*pulse;
+  g.addColorStop(0,"rgba(223,246,255,"+a.toFixed(3)+")");
+  g.addColorStop(1,"rgba(223,246,255,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  // the arrow, so which way it blows is never a guess
+  ctx.textAlign="center";
+  ctx.font="bold 24px 'Courier New',monospace";
+  ctx.globalAlpha=blowing?1:0.45+0.55*pulse;
+  ctx.fillStyle="#dff6ff";
+  glow("#7dd3fc",blowing?16:8);
+  ctx.fillText(windDir>0?"\u00bb\u00bb\u00bb":"\u00ab\u00ab\u00ab",
+               W/2+(blowing?Math.sin(t*20)*6:0),52);
+  ctx.font="bold 11px 'Courier New',monospace";
+  ctx.fillText(blowing?"FIRTINA":"FIRTINA GELIYOR",W/2,70);
+  noGlow();
+  ctx.globalAlpha=1;
+  ctx.textAlign="left";
+  ctx.restore();
+}
+
 // ─── THE RISING TIDE ──────────────────────────────────────────
 // A stage can declare `fog`: a sheet of spore-thick air that climbs from
 // below and burns anything still under it. It is the only pressure in the
@@ -2465,7 +2605,7 @@ function loadLevel(i){
   levelHasBoss=!!L.boss;
   BOSS_TRIGGER_X=L.boss?L.boss.triggerX:Infinity;
 
-  initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog(); initIcicles();
+  initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog(); initIcicles(); initWind();
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 
   // clear anything left over from the previous stage
@@ -4961,6 +5101,7 @@ function update(dt){
   updateCrumbles(dt);
   updateIcicles(dt);
   updateFog(dt);
+  updateWind(dt);
   updateVines(dt,left,right,jump);
   // hanging from a vine suspends the dino's own physics entirely — the
   // pendulum owns its position until it lets go
@@ -5103,6 +5244,10 @@ function update(dt){
   // anim
   if(Math.abs(player.vx)>10&&player.onGround) player.legPhase+=dt*8;
   player.idlePhase+=dt*2.5;
+
+  // the gust, applied after the dino's own acceleration so it is weather
+  // acting ON the player rather than something the input silently overrides
+  applyWind(dt);
 
   // move x
   player.x+=player.vx*dt;
@@ -6559,6 +6704,7 @@ function loop(now){
   drawFloatingTexts();
 
   ctx.restore();
+  drawWind();           // screen space: the gust blows across the VIEW
   drawFeverOverlay();   // full-screen, so outside the world transform
 
   drawHUD();

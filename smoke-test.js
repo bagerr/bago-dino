@@ -153,6 +153,12 @@ function run(opts){
   get FREEZE_TO_SOLID(){return FREEZE_TO_SOLID;},
   drawIcicles:()=>drawIcicles(),
   drawFog:()=>drawFog(),
+  drawWind:()=>drawWind(),
+  get RADIO_H(){return RADIO_H;},
+  get windState(){return windState;}, set windState(v){windState=v;},
+  get windDir(){return windDir;},     set windDir(v){windDir=v;},
+  get windTimer(){return windTimer;}, set windTimer(v){windTimer=v;},
+  updateWind:(dt)=>updateWind(dt),
   get vineGrab(){return vineGrab;},
   get camY(){return camY;},
   get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
@@ -2151,7 +2157,11 @@ function runSuite(){
 // ── scenario 58: Frozen Peaks joins the map ──────────────────
 {
   const {g,step}=run({map:true});
-  check('frozen peaks now owns a stage', g.WORLDS[2].levels.length===1,
+  check('frozen peaks owns a ridge and a summit', g.WORLDS[2].levels.length===2,
+        g.WORLDS[2].levels.join(','));
+  check('...and the Titan is the LAST of them, not the first',
+        g.LEVELS[g.WORLDS[2].levels[1]].boss!==null &&
+        g.LEVELS[g.WORLDS[2].levels[0]].boss===null,
         g.WORLDS[2].levels.join(','));
   check('it is still locked at the start', g.worldState(2).unlocked===false);
   // clearing the canopy is what opens it
@@ -2162,7 +2172,7 @@ function runSuite(){
   check('the unlock is persisted', (g.worldProgress.frozen||{}).unlocked===true,
         JSON.stringify(g.worldProgress.frozen));
   check('the peaks can be started', g.startWorld(2)===true);
-  check('...which loads the ice stage', g.isIce()===true && g.levelIndex===6,
+  check('...which loads the ice stage first', g.isIce()===true && g.levelIndex===7,
         g.levelIndex);
 }
 
@@ -2643,6 +2653,223 @@ function runSuite(){
     step(1);
   }
   check('a dropped icicle hits the armoured crusher on top', victim.hp<4, victim.hp);
+}
+
+// ── scenario 73: the blizzard cycle ─────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  check('the ridge is an ice stage', g.isIce()===true && g.LEVELS[7].theme==='ice');
+  check('it declares wind', !!g.LEVELS[7].wind);
+  check('it starts calm', g.windState==='calm', g.windState);
+
+  // the cycle: calm -> warn -> blow -> calm, and it never skips the warning
+  const seen=[];
+  let prev=g.windState;
+  for(let i=0;i<4000;i++){
+    g.updateWind(1/60);
+    if(g.windState!==prev){ seen.push(prev+'>'+g.windState); prev=g.windState; }
+    if(seen.length>=6) break;
+  }
+  check('it cycles through all three phases', seen.length>=4, seen.join(' '));
+  check('a gust is ALWAYS announced first',
+        seen.every(tr=>tr!=='calm>blow'), seen.join(' '));
+  check('...and every warning is followed by a gust',
+        seen.filter(tr=>tr.startsWith('warn>')).every(tr=>tr==='warn>blow'),
+        seen.join(' '));
+
+  // the warning has to be long enough to react to
+  g.windState='calm'; g.windTimer=0;
+  g.updateWind(1/60);
+  check('the warning is on the air before the gust', g.windState==='warn', g.windState);
+  check('...for a readable stretch of time', g.windTimer>=0.5, g.windTimer);
+  const dirAtWarn=g.windDir;
+  while(g.windState==='warn') g.updateWind(1/60);
+  check('the gust blows the way the arrow pointed', g.windDir===dirAtWarn,
+        dirAtWarn+' -> '+g.windDir);
+
+  g.windState='blow'; g.drawWind();
+  g.windState='warn'; g.drawWind();
+  g.windState='calm';
+  check('the storm overlay renders in both phases', true);
+}
+
+// ── scenario 73b: the storm announces itself, once ──────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.radio=null; g.radioQueue.length=0;
+  check('no storm call before the first gust', !g.radioFired['storm']);
+
+  // run the cycle up to the first warning
+  g.windState='calm'; g.windTimer=0;
+  g.updateWind(1/60);
+  const call=g.radio||g.radioQueue[0];
+  check('the first warning opens a transmission', !!call && g.radioFired['storm']);
+  check('...and it is the storm that is calling', !!call && call.title==='TİPİ ALARMI',
+        call&&call.title);
+  // there is no runtime text measuring in the radio window, so every line is
+  // hand-wrapped and has to fit
+  check('every line fits the comms window',
+        !!call && call.lines.every(l=>l.length<=40),
+        call && call.lines.map(l=>l.length).join(','));
+  check('...and the window is tall enough for them',
+        !!call && 36+call.lines.length*16<=g.RADIO_H+12,
+        call && call.lines.length);
+
+  // a later gust does not repeat it
+  g.radio=null; g.radioQueue.length=0;
+  for(let i=0;i<3000 && !g.radio && !g.radioQueue.length;i++){
+    g.windState==='blow'; g.updateWind(1/60);
+  }
+  check('it never calls twice in one stage', !g.radio && !g.radioQueue.length);
+
+  // ...but the next stage hears it fresh
+  g.loadLevel(7);
+  check('a fresh run hears it again', !g.radioFired['storm']);
+  g.windState='calm';
+}
+
+// ── scenario 74: what a gust actually does to you ───────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+
+  const park=()=>{
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=200; g.player.y=g.GROUND_Y-g.PLAYER_H; g.player.vx=0; g.player.vy=0;
+  };
+
+  // calm: standing still stays standing still
+  g.windState='calm'; g.windTimer=99;
+  park(); step(1);
+  for(let i=0;i<30;i++){ g.player.invuln=999; step(1); }
+  const calmDrift=g.player.x-200;
+  check('no wind, no drift', Math.abs(calmDrift)<2, calmDrift.toFixed(2));
+
+  // a gust from the left pushes you right, and only while it blows
+  park();
+  g.windState='blow'; g.windDir=1; g.windTimer=99;
+  for(let i=0;i<60;i++){ g.player.invuln=999; g.windTimer=99; step(1); }
+  const pushed=g.player.x-200;
+  check('a gust carries a standing dino downwind', pushed>40, pushed.toFixed(1));
+  check('...and only downwind', pushed>0 && g.player.vx>0, g.player.vx.toFixed(1));
+
+  // the other way, which is what catches a hardcoded direction
+  park();
+  g.windDir=-1;
+  for(let i=0;i<60;i++){ g.player.invuln=999; g.windTimer=99; step(1); }
+  const pushedL=g.player.x-200;
+  check('it blows both ways', pushedL<-40, pushedL.toFixed(1));
+
+  // it is drag, not a rocket: the drift settles at the wind speed
+  const capped=Math.abs(g.player.vx);
+  check('the shove is bounded by the wind speed',
+        capped<=g.LEVELS[7].wind.speed+4, capped.toFixed(1)+' vs '+g.LEVELS[7].wind.speed);
+
+  // and it never brakes someone already running downwind faster than it.
+  // One identical frame, run with the gust and then without it: if the wind
+  // is honest the two come out the same, and any braking shows up as a gap.
+  const sprintFrame=(blowing)=>{
+    park();
+    g.player.groundT=0; g.player.facing=1; g.player.x=200;
+    g.windState=blowing?'blow':'calm'; g.windDir=1; g.windTimer=99;
+    keys({ArrowRight:true});
+    g.player.vx=400;
+    step(1);
+    keys({ArrowRight:false});
+    return g.player.vx;
+  };
+  const gusting=sprintFrame(true), still=sprintFrame(false);
+  check('running with the wind is never slowed by it', gusting>=still-0.01,
+        still.toFixed(3)+' (calm) vs '+gusting.toFixed(3)+' (gust)');
+
+  // you can still fight it: holding upwind moves you upwind
+  park();
+  g.windState='blow'; g.windDir=1;
+  keys({ArrowLeft:true});
+  for(let i=0;i<70;i++){ g.player.invuln=999; g.windTimer=99; step(1); }
+  keys({ArrowLeft:false});
+  check('you can walk into the storm', g.player.x<200, g.player.x.toFixed(1));
+  check('...but it costs you ground', g.player.x>200-260, g.player.x.toFixed(1));
+
+  g.windState='calm';
+}
+
+// ── scenario 75: the wind is the ridge's alone ──────────────
+{
+  const {g,step}=run();       // world 0, stage 1 — a volcano stage
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('a stage with no wind declares none', !g.LEVELS[g.levelIndex].wind);
+  check('...so the blizzard is switched off', g.windState==='off', g.windState);
+  const x0=g.player.x;
+  g.player.vx=0; g.player.vy=0;
+  for(let i=0;i<40;i++){ g.player.invuln=999; step(1); }
+  check('nothing pushes you on a windless stage',
+        Math.abs(g.player.x-x0)<3, (g.player.x-x0).toFixed(2));
+  g.drawWind();
+  check('and the overlay draws nothing', true);
+
+  // loading the ridge arms it, loading back out disarms it
+  g.loadLevel(7);
+  check('entering the ridge arms the storm', g.windState==='calm', g.windState);
+  g.loadLevel(0);
+  step(1);
+  check('leaving it disarms the storm', g.windState==='off', g.windState);
+}
+
+// ── scenario 76: the ridge is playable ──────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  const L=g.LEVELS[7];
+  check('the ridge has an exit', g.platforms.some(p=>p.goal));
+  check('...and no boss sealing it', L.boss===null && g.gateOpen===true);
+  check('its checkpoint stands on solid ground',
+        g.platforms.some(p=>!p.lavaPit && p.y===g.GROUND_Y &&
+                            p.x<=L.checkpoint && p.x+p.w>=L.checkpoint),
+        L.checkpoint);
+  check('the frozen hostage has a flame to thaw it',
+        L.cages.every(c=>c.species!=='frozen' ||
+          L.weapons.some(w=>w.kind==='flame' && w.x<c.x)),
+        JSON.stringify(L.weapons.map(w=>w.kind+'@'+w.x)));
+  // ...and the flame is the LAST letter before it, or picking up anything
+  // later would disarm the player in front of the block
+  for(const c of L.cages.filter(c=>c.species==='frozen')){
+    const lastBefore=L.weapons.filter(w=>w.x<c.x).sort((a,b)=>a.x-b.x).slice(-1)[0];
+    check('the flame is the last letter before the ice block',
+          lastBefore && lastBefore.kind==='flame',
+          lastBefore && lastBefore.kind);
+  }
+
+  // every ledge is reachable, same audit the other stages get
+  const jump=300;
+  const stand=g.platforms.filter(p=>!p.lavaPit).map(p=>({x:p.x,y:p.y,w:p.w}));
+  const bad=stand.filter(p=>{
+    if(p.y>=g.GROUND_Y) return false;
+    return !stand.some(q=>q!==p && q.y>p.y && q.y-p.y<=jump &&
+                          q.x<p.x+p.w+170 && q.x+q.w>p.x-170);
+  });
+  check('every ledge on the ridge can be reached', bad.length===0,
+        JSON.stringify(bad));
+
+  // and it survives a real run
+  g.player.hp=99; g.player.invuln=999;
+  for(let i=0;i<240;i++){
+    g.player.invuln=999; g.player.hp=Math.max(g.player.hp,3);
+    step(1);
+  }
+  check('the ridge simulates without blowing up', g.STATE==='playing', g.STATE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
