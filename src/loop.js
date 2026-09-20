@@ -76,6 +76,7 @@ function loop(now){
   if(STATE==="playing") drawRadio();
 
   if(STATE==="map") drawWorldMap();
+  if(STATE==="hangar") drawHangar();
   if(STATE==="continue") drawContinue();
   if(STATE==="report") drawMissionReport();
   if(STATE==="dead") drawGameOver();

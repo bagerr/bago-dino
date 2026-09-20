@@ -272,6 +272,28 @@ function run(opts){
   get coins(){return coins;},
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
+  get UPGRADES(){return UPGRADES;},
+  upgradeLevel:(id)=>upgradeLevel(id),
+  upgradeCost:(id)=>upgradeCost(id),
+  upgradeMax:(id)=>upgradeMax(id),
+  canAfford:(id)=>canAfford(id),
+  buyUpgrade:(id)=>buyUpgrade(id),
+  maxHearts:()=>maxHearts(),
+  jetUseMult:()=>jetUseMult(),
+  jetRegenMult:()=>jetRegenMult(),
+  maxContinues:()=>maxContinues(),
+  salvageFrac:()=>salvageFrac(),
+  collectRadius:()=>collectRadius(),
+  openHangar:()=>openHangar(),
+  closeHangar:()=>closeHangar(),
+  updateHangar:(dt)=>updateHangar(dt),
+  drawHangar:()=>drawHangar(),
+  get hangarSel(){return hangarSel;}, set hangarSel(v){hangarSel=v;},
+  hangarRowAt:(x,y)=>hangarRowAt(x,y),
+  hangarBackButton:()=>hangarBackButton(),
+  mapHangarButton:()=>mapHangarButton(),
+  get BASE_HEARTS(){return BASE_HEARTS;},
+  get MOVE_SPD(){return MOVE_SPD;},
   get runCoins(){return runCoins;}, set runCoins(v){runCoins=v;},
   get lastPayout(){return lastPayout;},
   earnCoins:(n)=>earnCoins(n),
@@ -3682,6 +3704,247 @@ function runSuite(){
         store.getItem('neonDinoBank'));
   check('...but the lifetime total is not rewritten', g.bank.earned===have,
         g.bank.earned+' vs '+have);
+}
+
+// ── scenario 94: the hangar sells things ────────────────────
+{
+  const {g,step,store}=run({map:true});
+  check('there is a catalogue', g.UPGRADES.length>=5, g.UPGRADES.length);
+  check('nothing is owned to begin with',
+        g.UPGRADES.every(u=>g.upgradeLevel(u.id)===0),
+        g.UPGRADES.map(u=>u.id+':'+g.upgradeLevel(u.id)).join(' '));
+  check('everything has a price', g.UPGRADES.every(u=>g.upgradeCost(u.id)>0));
+  check('...and nothing is free later either: prices climb',
+        g.UPGRADES.every(u=>u.costs.every((c,i)=>i===0||c>u.costs[i-1])),
+        g.UPGRADES.map(u=>u.id+':'+u.costs.join('/')).join(' '));
+
+  check('a broke player can afford nothing',
+        g.UPGRADES.every(u=>g.canAfford(u.id)===false), g.bank.coins);
+  const id=g.UPGRADES[0].id;
+  check('...and buying is refused', g.buyUpgrade(id)===false);
+  check('...leaving the level alone', g.upgradeLevel(id)===0);
+  check('...and the balance alone', g.bank.coins===0, g.bank.coins);
+
+  // give it money the way the game does
+  g.runCoins=4000; g.bankStageClear('D');
+  const before=g.bank.coins;
+  const cost=g.upgradeCost(id);
+  check('now it can be afforded', g.canAfford(id)===true, before+' vs '+cost);
+  check('buying works', g.buyUpgrade(id)===true);
+  check('...the level went up', g.upgradeLevel(id)===1, g.upgradeLevel(id));
+  check('...the money came off', g.bank.coins===before-cost,
+        g.bank.coins+' vs '+(before-cost));
+  // and it is kept: asserting on the object alone would pass with the save deleted
+  const saved=JSON.parse(store.getItem('neonDinoBank'));
+  check('...and the purchase is written to the store', (saved.up||{})[id]===1,
+        JSON.stringify(saved.up));
+}
+
+// ── scenario 95: a level cap that means it ──────────────────
+{
+  const {g}=run({map:true});
+  g.runCoins=40000; g.bankStageClear('D');
+  const u=g.UPGRADES[0];
+  let bought=0;
+  for(let i=0;i<20;i++) if(g.buyUpgrade(u.id)) bought++;
+  check('you can buy every level it has', bought===u.costs.length,
+        bought+' of '+u.costs.length);
+  check('...and then it is maxed', g.upgradeLevel(u.id)===g.upgradeMax(u.id),
+        g.upgradeLevel(u.id));
+  check('a maxed upgrade has no price', g.upgradeCost(u.id)===null,
+        g.upgradeCost(u.id));
+  check('...and refuses to be bought again', g.buyUpgrade(u.id)===false);
+  check('...even with money to burn', g.bank.coins>0, g.bank.coins);
+  check('...and the level did not creep past the cap',
+        g.upgradeLevel(u.id)===u.costs.length, g.upgradeLevel(u.id));
+}
+
+// ── scenario 96: every upgrade actually does something ──────
+{
+  const {g}=run({map:true});
+  g.runCoins=40000; g.bankStageClear('D');
+  // measure each effect before and after maxing its own upgrade
+  const probes={
+    hearts:   ()=>g.maxHearts(),
+    tank:     ()=>g.jetUseMult(),
+    regen:    ()=>g.jetRegenMult(),
+    credits:  ()=>g.maxContinues(),
+    insurance:()=>g.salvageFrac(),
+    magnet:   ()=>g.collectRadius(),
+  };
+  const moved=[];
+  for(const u of g.UPGRADES){
+    const probe=probes[u.id];
+    if(!probe){ moved.push(u.id+':NO PROBE'); continue; }
+    const was=probe();
+    for(let i=0;i<u.costs.length;i++) g.buyUpgrade(u.id);
+    const now=probe();
+    if(now===was) moved.push(u.id+':'+was+'->'+now);
+  }
+  check('buying an upgrade changes what it claims to change',
+        moved.length===0, moved.join(' '));
+
+  // and the direction is the helpful one
+  check('more hearts is more', g.maxHearts()>g.BASE_HEARTS, g.maxHearts());
+  check('a bigger tank burns slower', g.jetUseMult()<1, g.jetUseMult());
+  check('faster refill is faster', g.jetRegenMult()>1, g.jetRegenMult());
+  check('more credits is more', g.maxContinues()>g.MAX_CONTINUES, g.maxContinues());
+  check('insurance pays better', g.salvageFrac()>g.SALVAGE_FRAC, g.salvageFrac());
+  check('...but never the whole pouch', g.salvageFrac()<1, g.salvageFrac());
+  check('the magnet reaches further', g.collectRadius()>50, g.collectRadius());
+}
+
+// ── scenario 97: capability, not power ──────────────────────
+{
+  const {g,step}=run({map:true});
+  g.runCoins=40000; g.bankStageClear('D');
+  for(const u of g.UPGRADES) for(let i=0;i<u.costs.length;i++) g.buyUpgrade(u.id);
+
+  // The rule the whole layer rests on. If a damage or speed upgrade is ever
+  // added, this is where the decision has to be made consciously instead of
+  // by accident.
+  const ALLOWED=['hearts','tank','regen','credits','insurance','magnet','squad'];
+  const stray=g.UPGRADES.filter(u=>!ALLOWED.includes(u.id)).map(u=>u.id);
+  check('the catalogue sells only capability', stray.length===0, stray.join(' '));
+
+  check('nothing bought made the dino faster', g.MOVE_SPD===200, g.MOVE_SPD);
+  const beforeAmmo=Object.entries(g.WEAPONS).map(([k,v])=>k+':'+v.ammo).join(' ');
+  check('nothing bought rewrote the arsenal',
+        beforeAmmo===Object.entries(g.WEAPONS).map(([k,v])=>k+':'+v.ammo).join(' '));
+}
+
+// ── scenario 98: the upgrades reach the actual game ─────────
+{
+  const {g,step}=run({map:true});
+  g.runCoins=40000; g.bankStageClear('D');
+  const plainHearts=g.maxHearts(), plainCredits=g.maxContinues();
+  g.startWorld(0); step(2);
+  check('a fresh mission starts on the stock heart count',
+        g.player.maxHp===plainHearts, g.player.maxHp+' vs '+plainHearts);
+  check('...and the stock credits', g.continuesLeft===plainCredits,
+        g.continuesLeft+' vs '+plainCredits);
+
+  // buy the armour and the spare credits, then start again
+  for(let i=0;i<3;i++) g.buyUpgrade('hearts');
+  g.buyUpgrade('credits');
+  g.startWorld(0); step(2);
+  check('the armour plating is on the dino', g.player.maxHp===g.maxHearts(),
+        g.player.maxHp+' vs '+g.maxHearts());
+  check('...and it is more than stock', g.player.maxHp>plainHearts,
+        plainHearts+' -> '+g.player.maxHp);
+  check('the spare credit is in the rack', g.continuesLeft===g.maxContinues(),
+        g.continuesLeft+' vs '+g.maxContinues());
+  check('...and it is more than stock', g.continuesLeft>plainCredits,
+        plainCredits+' -> '+g.continuesLeft);
+
+  // ── the magnet has to reach the COINS, not just the getter ──
+  // A coin parked further than the stock radius and nearer than the upgraded
+  // one: whether it is collected is the whole question.
+  const reachTest=(dist)=>{
+    g.loadLevel(g.levelIndex);
+    g.player.hp=99; g.player.invuln=999; g.player.activePower=null;
+    step(2);
+    const c=g.coins.filter(c=>!c.collected)[0];
+    // park it in open air with the dino beside it, and hold both still
+    c.x=600; c.y=200; c.bob=0;
+    for(let i=0;i<4;i++){
+      g.player.x=c.x-dist-g.PLAYER_W/2;
+      g.player.y=c.y-g.PLAYER_H/2;
+      g.player.vx=0; g.player.vy=0;
+      g.player.invuln=999; g.player.activePower=null;
+      c.x=600; c.y=200; c.bob=0;
+      step(1);
+      // collection sets popping first; collected only lands 0.35s later
+      if(c.popping||c.collected) return true;
+    }
+    return !!(c.popping||c.collected);
+  };
+  check('a coin inside the stock radius is picked up', reachTest(30)===true);
+  const far=Math.round((50+g.collectRadius())/2);   // between the two radii
+  check('...and one beyond it is not, while the magnet is unbought',
+        reachTest(far)===false, far+'px vs stock 50');
+  g.buyUpgrade('magnet'); g.buyUpgrade('magnet');
+  check('the magnet upgrade widens the reach', g.collectRadius()>far,
+        g.collectRadius()+' vs '+far);
+  check('...and the game actually collects at the wider reach',
+        reachTest(far)===true, far+'px vs '+g.collectRadius());
+
+  // insurance reaches the salvage too
+  g.runCoins=100;
+  const insured=g.bankSalvage();
+  check('insurance is not bought yet, so salvage is the base rate',
+        insured===Math.floor(100*g.SALVAGE_FRAC), insured);
+  g.buyUpgrade('insurance');
+  g.runCoins=100;
+  const better=g.bankSalvage();
+  check('buying insurance pays back more on the next loss', better>insured,
+        insured+' -> '+better);
+}
+
+// ── scenario 99: the screen ─────────────────────────────────
+{
+  const {g,step,keys,click}=run({map:true});
+  check('the game opens on the map', g.STATE==='map', g.STATE);
+  g.drawWorldMap();
+  check('the map draws its way in', true);
+
+  // H opens it
+  keys({KeyH:true});
+  step(30);
+  keys({KeyH:false});
+  check('H opens the hangar', g.STATE==='hangar', g.STATE);
+  g.drawHangar();
+  check('the hangar renders', true);
+
+  // the cursor moves and wraps
+  const first=g.hangarSel;
+  // a press is an EDGE: the key has to be seen released on a frame before
+  // the next press counts, which is automatic in the game and manual here
+  const tapDown=()=>{ keys({ArrowDown:true}); g.updateHangar(0.016);
+                      keys({ArrowDown:false}); g.updateHangar(0.016); };
+  tapDown();
+  check('down moves the cursor', g.hangarSel!==first, g.hangarSel);
+  g.hangarSel=g.UPGRADES.length-1;
+  tapDown();
+  check('...and wraps at the bottom', g.hangarSel===0, g.hangarSel);
+
+  // escape goes back
+  keys({Escape:true}); g.updateHangar(0.016); keys({Escape:false});
+  check('escape returns to the map', g.STATE==='map', g.STATE);
+}
+
+// ── scenario 100: tapping it, on a tablet ───────────────────
+{
+  const {g,step,click}=run({map:true});
+  g.touchMode=true;
+  g.runCoins=4000; g.bankStageClear('D');
+  const money=g.bank.coins;
+
+  // the map's hangar button
+  const hb=g.mapHangarButton();
+  click(hb.x+hb.w/2,hb.y+hb.h/2);
+  check('tapping HANGAR on the map opens it', g.STATE==='hangar', g.STATE);
+
+  // a row is where it is drawn: same geometry for both
+  const row=2;
+  const rowY=112+row*44+10;
+  check('the tap geometry agrees with the drawn rows',
+        g.hangarRowAt(70+10,rowY)===row, g.hangarRowAt(70+10,rowY));
+  check('...and a tap outside the panel hits nothing',
+        g.hangarRowAt(5,rowY)===-1 && g.hangarRowAt(70+10,20)===-1);
+
+  const id=g.UPGRADES[row].id;
+  const cost=g.upgradeCost(id);
+  click(70+10,rowY);
+  check('tapping a row buys it', g.upgradeLevel(id)===1, g.upgradeLevel(id));
+  check('...and charges for it', g.bank.coins===money-cost,
+        g.bank.coins+' vs '+(money-cost));
+  check('...and leaves that row selected', g.hangarSel===row, g.hangarSel);
+
+  // the way out
+  const b=g.hangarBackButton();
+  click(b.x+b.w/2,b.y+b.h/2);
+  check('tapping HARİTA leaves the hangar', g.STATE==='map', g.STATE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

@@ -659,6 +659,21 @@ function drawWorldMap(){
   ctx.fillText("KASA",W-22,58);
   ctx.textAlign="left";
 
+  // the way into the hangar. A real rect, because a tablet has no H key.
+  const hb=mapHangarButton();
+  const rich=bank.coins>0;
+  ctx.fillStyle=rich?"rgba(255,221,68,0.10)":"rgba(255,255,255,0.05)";
+  ctx.fillRect(hb.x,hb.y,hb.w,hb.h);
+  ctx.strokeStyle=rich?"#ffdd44":"#55607c"; ctx.lineWidth=1;
+  ctx.strokeRect(hb.x+0.5,hb.y+0.5,hb.w-1,hb.h-1);
+  ctx.textAlign="center";
+  ctx.font="bold 13px 'Courier New',monospace";
+  ctx.fillStyle=rich?"#ffdd44":"#8899bb";
+  ctx.fillText("HANGAR",hb.x+hb.w/2,hb.y+17);
+  ctx.font="bold 9px 'Courier New',monospace";
+  ctx.fillStyle="#66708c";
+  ctx.fillText(touchMode?"DOKUN":"H",hb.x+hb.w/2,hb.y+30);
+
   ctx.textAlign="center";
   ctx.font="bold 10px 'Courier New',monospace";
   ctx.fillStyle="#66708c";

@@ -22,7 +22,7 @@
 // the optimal way to play would be to farm the easiest stage forever. The
 // first clear of a stage pays a bonus that a replay never pays again, for
 // the same reason.
-let bank = {coins:0, earned:0, firstClear:{}};
+let bank = {coins:0, earned:0, firstClear:{}, up:{}};
 try{
   const raw=localStorage.getItem("neonDinoBank");
   if(raw){
@@ -31,6 +31,7 @@ try{
       bank.coins=Math.max(0,Math.floor(Number(p.coins)||0));
       bank.earned=Math.max(0,Math.floor(Number(p.earned)||0));
       bank.firstClear=(p.firstClear&&typeof p.firstClear==="object")?p.firstClear:{};
+      bank.up=(p.up&&typeof p.up==="object")?p.up:{};
     }
   }
 }catch(e){ /* a corrupt or blocked store just means an empty bank */ }
@@ -92,8 +93,9 @@ function bankStageClear(letter){
 // Losing the last heart. A quarter of the pouch, no multiplier, no bonus —
 // enough that the evening was not wasted, not enough to be a strategy.
 function bankSalvage(){
-  const got=Math.floor(runCoins*SALVAGE_FRAC);
-  lastPayout={coins:runCoins, rescue:0, mult:SALVAGE_FRAC, first:0,
+  const rate=salvageFrac();
+  const got=Math.floor(runCoins*rate);
+  lastPayout={coins:runCoins, rescue:0, mult:rate, first:0,
               scaled:got, total:got, firstTime:false, salvage:true};
   if(got>0){ bank.coins+=got; bank.earned+=got; saveBank(); }
   runCoins=0;

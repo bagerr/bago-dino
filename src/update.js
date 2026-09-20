@@ -40,11 +40,15 @@ function update(dt){
       }
     }
     mapKeyWasDown=anyDir;
+    if(K["KeyH"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyH"]=false; openHangar(); return; }
     if(K["Enter"]&&stateTimer>0.25&&mapStampTimer<=0){
       if(startWorld(mapSel)) return;
     }
     return;
   }
+
+  // between missions: spending what the last one paid
+  if(STATE==="hangar"){ updateHangar(dt); return; }
 
   // credit clock: ENTER spends one, R gives up, zero means it is really over
   if(STATE==="continue"){
@@ -135,7 +139,7 @@ function update(dt){
     // Hanging is a rest: the pack refuels while you swing. The early return
     // below skips the ordinary regen entirely (that only runs on the ground,
     // and a vine forces onGround false), so it has to happen here.
-    player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*1.6*followerPower().fuelMult*dt);
+    player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*1.6*jetRegenMult()*followerPower().fuelMult*dt);
     updateParticles(dt);
     updateFloatingTexts(dt);
     updateFollowers(dt);
@@ -218,7 +222,7 @@ function update(dt){
     }
     // HYPER BEAM makes the jetpack fuel unlimited for its duration
     if(!(player.activePower&&player.activePower.kind==="hyper")){
-      player.jetFuel=Math.max(0,player.jetFuel-JET_FUEL_USE*dt);
+      player.jetFuel=Math.max(0,player.jetFuel-JET_FUEL_USE*jetUseMult()*dt);
     }
     useJet=true;
     player.jetPhase+=dt*18;
@@ -264,7 +268,7 @@ function update(dt){
   player.jetpack=useJet;
 
   // fuel regen when on ground + not jetting
-  if(player.onGround&&!useJet) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*followerPower().fuelMult*dt);
+  if(player.onGround&&!useJet) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*jetRegenMult()*followerPower().fuelMult*dt);
 
   // gravity — releasing the thrust drops the dino into a heavier, snappier fall
   // instead of a floaty one
@@ -337,7 +341,7 @@ function update(dt){
         // a crumbling shelf starts counting the moment you touch it
         if((p.crumble||p.crack) && p.crumbleT===undefined && !p.gone)
           p.crumbleT=fuseFor(p);
-        if(player.jetFuel<1) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*followerPower().fuelMult*dt);
+        if(player.jetFuel<1) player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*jetRegenMult()*followerPower().fuelMult*dt);
       } else if(player.vy<0 && prev_y>=p.y+p.h-tol){
         player.y=p.y+p.h; player.vy=0;
       } else {
@@ -783,7 +787,7 @@ function update(dt){
   const pcx=player.x+PLAYER_W/2, pcy=player.y+PLAYER_H/2;
   // FEVER MODE auto-pulls every gold/gem on screen, same as the MAGNET power-up
   const magnetActive=(player.activePower&&player.activePower.kind==="magnet")||feverMode;
-  const COLLECT_R=50, MAGNET_R=magnetActive?260:80;
+  const COLLECT_R=collectRadius(), MAGNET_R=magnetActive?260:80;
   // reverse iteration so collecting/removing a coin can never cause a neighboring
   // coin to be skipped over in the same pass
   for(let i=coins.length-1;i>=0;i--){
@@ -1744,6 +1748,7 @@ function endLevel(){
 }
 
 function restartGame(){
+  player.maxHp=maxHearts();
   player.hp=player.maxHp; player.invuln=0;
   player.activePower=null; player.shieldCharge=false;
   player.dashTimer=0; player.dashCooldown=0; player.dashKeyWasDown=false;
@@ -1752,7 +1757,7 @@ function restartGame(){
   stopLaserSound(); stopSiren(); player.wasFiring=false;
   STATE="playing"; stateTimer=0; reportTimer=0;
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
-  continuesLeft=MAX_CONTINUES; continueTimer=0;
+  continuesLeft=maxContinues(); continueTimer=0;
   weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
   screenShake=0; bossShakeTimer=0;
   // back to the top of the CURRENT world, not to the first stage of the game

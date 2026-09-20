@@ -31,9 +31,23 @@ window.addEventListener("pointerdown", ev=>{
     if(touchMode) touchPressAt(ev.pointerId===undefined?0:ev.pointerId,p);
     return;
   }
+  // the hangar: tap a row to buy it, or the button to leave
+  if(STATE==="hangar"){
+    const b=hangarBackButton();
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){ closeHangar(); return; }
+    const row=hangarRowAt(p.x,p.y);
+    if(row>=0){
+      // one tap selects, and buys what it selected — a tablet has no ENTER
+      hangarSel=row;
+      tryBuy(UPGRADES[row].id);
+    }
+    return;
+  }
   // the map: tap a destination
   if(STATE==="map"){
     if(mapStampTimer>0) return;
+    const hb=mapHangarButton();
+    if(p.x>=hb.x&&p.x<=hb.x+hb.w&&p.y>=hb.y&&p.y<=hb.y+hb.h){ openHangar(); return; }
     for(let i=0;i<WORLDS.length;i++){
       const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
       if(Math.hypot(p.x-nx,p.y-ny)>38) continue;

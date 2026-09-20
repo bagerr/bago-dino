@@ -22,10 +22,11 @@ function startWorld(i){
   worldIndex=i;
   score=0; chain=0; chainTimer=0; feverMode=false; feverFlash=0;
   newRecord=false;
+  player.maxHp=maxHearts();          // the hangar's armour plating
   player.hp=player.maxHp; player.invuln=0;
   player.activePower=null; player.shieldCharge=false;
   player.dashTimer=0; player.dashCooldown=0; player.dashKeyWasDown=false;
-  continuesLeft=MAX_CONTINUES; continueTimer=0;
+  continuesLeft=maxContinues(); continueTimer=0;
   weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
   screenShake=0; bossShakeTimer=0; hitStopTimer=0;
