@@ -34,7 +34,34 @@ if(!fs.existsSync(MANIFEST)){
   process.exit(1);
 }
 
-const html=fs.readFileSync(SRC,'utf8');
+const shell=fs.readFileSync(SRC,'utf8');
+
+// Pull the game's own scripts in. They are separate files so the source can
+// be worked on in pieces; the person receiving the bundle wants one file, so
+// this is where the pieces come back together. Order is document order and
+// each keeps its own <script> tag, because these files rely on being
+// separate scripts no more than they rely on being one -- but keeping the
+// boundaries means the bundle runs exactly like the folder build does.
+let inlinedScripts=0;
+const html=shell.replace(/<script\s+src\s*=\s*["']([^"']+)["']\s*><\/script>/g,(m,rel)=>{
+  const p=path.resolve(path.dirname(SRC),rel);
+  if(!fs.existsSync(p)){
+    console.error('index2.html references '+rel+', which does not exist.');
+    process.exit(1);
+  }
+  inlinedScripts++;
+  const code=fs.readFileSync(p,'utf8');
+  // a closing tag inside a string would end the script element early
+  if(/<\/script/i.test(code)){
+    console.error(rel+' contains a literal closing script tag; it cannot be inlined as-is.');
+    process.exit(1);
+  }
+  return '<script>\n// ===== '+rel+' =====\n'+code+'</script>';
+});
+if(!inlinedScripts){
+  console.error('index2.html loads no external scripts — expected the split build.');
+  process.exit(1);
+}
 let assets;
 try{
   // PowerShell's Set-Content -Encoding utf8 prepends a BOM, which JSON.parse
@@ -79,6 +106,6 @@ const out=html
 fs.writeFileSync(OUT,out,'utf8');
 const mb=n=>(n/1024/1024).toFixed(2)+' MB';
 console.log('wrote '+path.basename(OUT)+'  '+mb(Buffer.byteLength(out,'utf8')));
-console.log('  '+Object.keys(assets).length+' assets inlined, '+wanted.length+' referenced');
+console.log('  '+inlinedScripts+' scripts inlined, '+Object.keys(assets).length+' assets inlined, '+wanted.length+' referenced');
 if(unused.length) console.log('  (bundled but unused: '+unused.join(', ')+')');
 console.log('  send this single file — it needs nothing beside it.');

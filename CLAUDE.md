@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository is a self-contained static HTML project with no build system, package manager, bundler, or dependency install step. There is nothing to compile — open the HTML file directly in a browser to run it.
 
-Two builds of the same game live here, both self-contained single-file HTML5 Canvas arcade platformers sharing the same sibling PNGs:
+Two builds of the same game live here, HTML5 Canvas arcade platformers sharing the same sibling PNGs:
 
 - [arcade.html](arcade.html) — **NEON DINO-AGE**, the pure arcade build. Treat it as the stable baseline; it is the fallback if a story-mode change goes wrong. It was called `index.html` until the repository started being served as a website: GitHub Pages answers a bare URL with `index.html` and nothing else, so that name now belongs to a three-line redirect page and the arcade build moved, byte for byte, to `arcade.html`.
 - [index.html](index.html) — not a build. A redirect to `index2.html` that keeps the query string, so `bagerr.github.io/bago-dino/` opens the current game. Do not run the smoke test against it.
@@ -20,7 +20,13 @@ The project is a git repository (`main`, identity set locally to Bago / bagerrsa
 
 ## The game (both builds)
 
-A ~900×506 Canvas game rendered with plain 2D context calls — no framework, no build step, no external JS libraries. Everything (game logic, rendering, audio synthesis) lives in one `<script>` block. Sprite art is loaded from the sibling PNGs — `bagodino.png` (player), `baby.png` (the caged captive you rescue), `enemy_fly.png`/`enemy_ground.png` (regular enemies), `enemyboss.png` (final boss), `beam.png`/`beam_hyper.png` (laser), `lava_wall.png`/`lava_ceiling.png` (cave decor — **arcade.html only now**), and in index2.html `portal.png` (the evacuation rift) and `ground.png` (the walking surface) — so do not rename these files without updating their `new Image().src` assignments.
+A ~900×506 Canvas game rendered with plain 2D context calls — no framework, no build step, no external JS libraries.
+
+**index2.html is a shell now.** It is the page, the stylesheet and an ordered list of `<script src="src/*.js">` tags; the game lives in [src/](src/), fifteen files from `core.js` to `loop.js`. arcade.html is still one block.
+
+They are **classic scripts, deliberately not ES modules.** Top-level `let`/`const` in a classic script go into the shared global lexical environment, so every cross-file reference — `camX`, `score`, `platforms`, `player` — keeps working exactly as it did in one file, with no imports, no exports and no rewrite. ES modules would have meant converting every mutable shared binding into a state object or a pair of setters, which is a rewrite rather than a split, and would have broken `file://` along the way.
+
+**The one rule the split introduces:** declarations hoist *within* a script and not *across* scripts. Anything called at load time must be declared in an earlier file. This already bit once — `computeSpriteBBox` sat ~2000 lines below the sprites whose `onload` handlers call it, which only worked because of hoisting, so it moved into `src/sprites.js` ahead of every `new Image()`. Order in the tag list is the original top-to-bottom order of the file otherwise, so nothing else changed. Adding a file means adding its tag to index2.html; the bundler and the suite both read that list rather than a hardcoded one. Sprite art is loaded from the sibling PNGs — `bagodino.png` (player), `baby.png` (the caged captive you rescue), `enemy_fly.png`/`enemy_ground.png` (regular enemies), `enemyboss.png` (final boss), `beam.png`/`beam_hyper.png` (laser), `lava_wall.png`/`lava_ceiling.png` (cave decor — **arcade.html only now**), and in index2.html `portal.png` (the evacuation rift) and `ground.png` (the walking surface) — so do not rename these files without updating their `new Image().src` assignments.
 
 **About the boss art.** `boss_stage1.jpg` and `boss_stage2.jpg` are WebP despite the extension, and `boss_stage1_rage.src.png` is a PNG with no alpha channel at all — all three arrived with an opaque white background. The keyed, cropped, alpha versions the game actually loads are `boss_stage1.png`, `boss_stage2.png` and `boss_stage1_rage.png`, produced by the same WIC recipe as `portal.png`. Keep the sources; regenerate rather than pointing a sprite at a raw drop.
 
@@ -60,7 +66,7 @@ Run it against the bundle before sending one: it proves the file actually works 
 
 [smoke-test.js](smoke-test.js) is the whole test setup: no framework, no dependencies, no dev server, one file. Run it after **every** change to either build; it is far faster than clicking through three stages by hand and it is the only practical way to catch runtime errors (TDZ, undefined refs, stage-transition breakage). Exit code is 0 only if every check in both passes passed, so it drops straight into a hook or CI if you ever want one.
 
-How it works: it extracts the `<script>` body, runs it under `node:vm` against a stubbed `document`/`window`/`Image`/`localStorage`, captures the `requestAnimationFrame` callback and drives real frames through it — these are genuine simulation runs, not mocks of the game's own logic. A `globalThis.__g = {...}` accessor block is appended to the extracted source to reach `let`-scoped internals (top-level `let`/`const` in a vm script are script-scoped, not on the sandbox global); **add a getter there when you need to assert on something new.** The stubbed 2D context records a couple of things (`drawStats`) so a scenario can assert on what was actually drawn, which is how the ground strip's source row is checked.
+How it works: it collects the build's scripts in document order — inline blocks and `<script src>` files alike — and **runs each one as its own `vm` script in one shared context, the way a browser does.** They are not concatenated, and that is the point: joining them would restore hoisting across files and hide the only class of bug the split can introduce. A planted break (moving `computeSpriteBBox` back to where it used to live) is reported as `src/entities.js: computeSpriteBBox is not defined`. Everything runs against a stubbed `document`/`window`/`Image`/`localStorage`; the harness captures the `requestAnimationFrame` callback and drives real frames through it — these are genuine simulation runs, not mocks of the game's own logic. A `globalThis.__g = {...}` accessor block runs last, as a script of its own, and reaches the lexical scope the game's files built up between them — getters and setters both work (top-level `let`/`const` are script-scoped, not on the sandbox global, but they ARE shared between scripts in the same context). **Add a getter there when you need to assert on something new**, and note that a missing one reads as `undefined` rather than as an error: `g.PLAYER_W` was never exposed, so a test position came out `NaN` and the only symptom was a check that would not go green. The stubbed 2D context records a couple of things (`drawStats`) so a scenario can assert on what was actually drawn, which is how the ground strip's source row is checked.
 
 The suite is also the design review. Two real problems in the POW pass showed up as red checks rather than as bad play: the stray hatchling being re-grabbed on the frame it panicked, and a grade check so loose that a build awarding full rescue points for zero rescues still passed. Write the check so that only the intended behaviour satisfies it.
 
@@ -96,7 +102,7 @@ Two more traps worth knowing before writing a scenario:
 
 The shape that works: drive real frames through `loop()`, assert on state through the `__g` accessor, and call the draw functions directly (`drawRadio`, `drawMissionReport`, `drawArenaBanners`, `drawPlatforms`, `drawWin`, `drawGameOver`) so the render paths are exercised even though the stubbed context draws nothing.
 
-A quick syntax-only check: `node -e "new Function(require('fs').readFileSync('index2.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"`.
+A quick syntax-only check across the split sources: `node -e "for(const f of require('fs').readdirSync('src')) new (require('vm').Script)(require('fs').readFileSync('src/'+f,'utf8'),{filename:f})"`.
 
 ### Worlds, stages and biomes
 

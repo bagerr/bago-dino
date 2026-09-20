@@ -12,9 +12,16 @@ There are two ways to hand it over.
 node build-standalone.js
 ```
 
-writes **`neon-dino-age.html`** (~7.4 MB): the game with every sprite inlined
-as a `data:` URI. It needs no folder, no server and no internet. Send that
-one file; double-clicking it works on Windows, macOS, Android and iPad.
+writes **`neon-dino-age.html`** (~7.5 MB): the game with every sprite inlined
+as a `data:` URI **and every `src/*.js` file inlined as its own script tag**,
+in the order index2.html lists them. It needs no folder, no server and no
+internet. Send that one file; double-clicking it works on Windows, macOS,
+Android and iPad.
+
+The script tags are kept separate inside the bundle rather than merged into
+one, so the bundle loads under the same rules the folder build does — a
+declaration that does not hoist across files in one build must not hoist in
+the other either, or the bundle could work where the source does not.
 
 The game reads its art through `assetURL(name)`, which checks
 `window.__ASSETS` first and falls back to the filename. That is the whole

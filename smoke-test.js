@@ -27,12 +27,29 @@ const path=require('path');
 
 const TARGET=path.resolve(process.argv[2]||path.join(__dirname,'index2.html'));
 const html=fs.readFileSync(TARGET,'utf8');
-// A build can carry more than one script block: the standalone bundle puts
-// its inlined art in a tag of its own ahead of the game. Take them all, in
-// order, instead of greedily swallowing the first closing tag.
-const blocks=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]);
-if(!blocks.length) throw new Error('no <script> block in '+TARGET);
-const body=blocks.join('\n;\n');
+// A build is a list of scripts, in document order, and each one is run on
+// its own — which is what the browser does. Two shapes turn up here:
+// inline blocks (the standalone bundle inlines its art and its code) and
+// <script src> references (the folder build, split across src/*.js).
+//
+// They are NOT concatenated. Declarations hoist within a script and not
+// across scripts, so a harness that joined them could not see the one class
+// of bug splitting a file can introduce: a function used at load time by a
+// file that runs before the file that declares it.
+const SCRIPT_RE=/<script(\s[^>]*)?>([\s\S]*?)<\/script>/g;
+const scripts=[];
+for(const m of html.matchAll(SCRIPT_RE)){
+  const attrs=m[1]||'';
+  const srcAttr=attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/);
+  if(srcAttr){
+    const p=path.resolve(path.dirname(TARGET),srcAttr[1]);
+    if(!fs.existsSync(p)) throw new Error('missing script '+srcAttr[1]+' referenced by '+TARGET);
+    scripts.push({name:srcAttr[1], code:fs.readFileSync(p,'utf8')});
+  } else if(m[2].trim()){
+    scripts.push({name:path.basename(TARGET)+' (inline)', code:m[2]});
+  }
+}
+if(!scripts.length) throw new Error('no script in '+TARGET);
 
 let FIRE_ONLOAD=true;      // flipped by the driver at the bottom
 let failures=0, checks=0;
@@ -273,7 +290,14 @@ function run(opts){
   drawFollowers:()=>drawFollowers(),
   lavaPits:()=>lavaPits,
 };`;
-  vm.runInContext(body+accessor,ctxObj,{filename:'index2.html'});
+  // one script at a time, in order, exactly as the page loads them
+  for(const sc of scripts){
+    try{ vm.runInContext(sc.code,ctxObj,{filename:sc.name}); }
+    catch(e){ throw new Error(sc.name+': '+e.message); }
+  }
+  // the accessor block goes last and reaches the shared lexical scope the
+  // scripts built up between them
+  vm.runInContext(accessor,ctxObj,{filename:'__accessor'});
 
   const g=sandbox.__g;
   // the boot does rAF(t=>{lastTime=t; rAF(loop)}) — drain it to get `loop`
