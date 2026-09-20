@@ -155,6 +155,12 @@ function run(opts){
   drawFog:()=>drawFog(),
   drawWind:()=>drawWind(),
   drawGlaze:()=>drawGlaze(),
+  drawLowBars:()=>drawLowBars(),
+  get SLIDE_TIME(){return SLIDE_TIME;},
+  get SLIDE_SPD(){return SLIDE_SPD;},
+  get CRACK_DELAY(){return CRACK_DELAY;},
+  get CRACK_RESPAWN(){return CRACK_RESPAWN;},
+  get LAVA_Y(){return LAVA_Y;},
   titanSlick:()=>titanSlick(),
   breathRay:()=>breathRay(),
   enterBossPhase2:()=>enterBossPhase2(),
@@ -1293,8 +1299,11 @@ function runSuite(){
   for(let i=0;i<8;i++){ step(1); }   // settle onto the floor
   const hp1=g.player.hp;
   g.player.invuln=0;
-  putWave();
-  for(let i=0;i<4 && g.player.hp===hp1;i++){ quiet(); step(1); }
+  // re-placed every frame: onGround is only true on every other one, so a
+  // wave that travels past in four frames can miss for the wrong reason
+  for(let i=0;i<10 && g.player.hp===hp1;i++){
+    quiet(); putWave(); g.player.invuln=0; step(1);
+  }
   check('a shockwave hits a player standing on the floor', g.player.hp<hp1,
         hp1+' -> '+g.player.hp);
 
@@ -2387,10 +2396,10 @@ function runSuite(){
   g.startWorld(0);
   step(3);
   const btns=g.touchButtons();
-  check('the pad has a full set of controls', btns.length===5, btns.length);
+  check('the pad has a full set of controls', btns.length===6, btns.length);
   const ids=btns.map(b=>b.id).sort().join(',');
-  check('...left, right, jump, fire and dash',
-        ids==='DASH,FIRE,JUMP,LEFT,RIGHT', ids);
+  check('...left, right, jump, fire, dash and slide',
+        ids==='DASH,FIRE,JUMP,LEFT,RIGHT,SLIDE', ids);
   check('every button sits inside the canvas',
         btns.every(b=>b.x-b.r>=0&&b.x+b.r<=900&&b.y-b.r>=0&&b.y+b.r<=506));
   // no two buttons may overlap, or a thumb lands on both
@@ -3126,6 +3135,221 @@ function runSuite(){
   check('...and still keeps its own floor', g.titanSlick()===false);
   g.drawBossRage();
   check('the red banner still renders for it', true);
+}
+
+// ── scenario 81: the slide ──────────────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+  g.windState='calm'; g.windTimer=999;
+
+  const stand=(x)=>{
+    g.player.x=x; g.player.y=g.GROUND_Y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.groundT=0;
+    g.player.invuln=999; g.player.hp=99;
+    g.player.slideT=0; g.player.slideCooldown=0; g.player.slideKeyWasDown=false;
+    g.player.facing=1;
+  };
+
+  stand(600);
+  check('it starts on its feet', g.player.slideT===0);
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  check('down drops the dino into a slide', g.player.slideT>0, g.player.slideT);
+  check('...with a kick of its own', Math.abs(g.player.vx)>=g.SLIDE_SPD*0.9,
+        g.player.vx);
+  check('...in the direction it was facing', g.player.vx>0, g.player.vx);
+
+  // it commits. The same slide, run twice for the same number of frames,
+  // once fighting it and once not: if the input reached the slide at all the
+  // two would drift apart.
+  const slideRun=(steer)=>{
+    stand(600);
+    keys({ArrowDown:true});
+    step(1);
+    keys({ArrowDown:false});
+    if(steer) keys({ArrowLeft:true});
+    for(let i=0;i<8;i++){ g.player.invuln=999; step(1); }
+    if(steer) keys({ArrowLeft:false});
+    return {vx:g.player.vx, x:g.player.x};
+  };
+  const fought=slideRun(true), free=slideRun(false);
+  check('a slide cannot be steered out of',
+        Math.abs(fought.vx-free.vx)<0.01, free.vx.toFixed(2)+' vs '+fought.vx.toFixed(2));
+  check('...and it still carries you the same distance',
+        Math.abs(fought.x-free.x)<0.01, free.x.toFixed(2)+' vs '+fought.x.toFixed(2));
+  check('...forward', free.vx>0, free.vx);
+
+  // it ends by itself
+  let frames=0;
+  while(g.player.slideT>0 && frames<120){ g.player.invuln=999; step(1); frames++; }
+  check('it ends on its own', g.player.slideT===0, frames);
+
+  // ...and it lasts what it says it lasts. Timed from a FRESH slide: the one
+  // above had already burned seven frames of steering before the count began.
+  stand(600);
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  let lived=1;
+  while(g.player.slideT>0 && lived<200){ g.player.invuln=999; step(1); lived++; }
+  check('...for about as long as it says it does',
+        lived>=g.SLIDE_TIME*56 && lived<=g.SLIDE_TIME*64,
+        lived+' frames for '+g.SLIDE_TIME+'s');
+
+  // and it cannot simply be held down as a way to travel
+  g.player.groundT=0; g.player.slideKeyWasDown=false;
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  check('there is a cooldown before the next one', g.player.slideT===0,
+        g.player.slideCooldown);
+}
+
+// ── scenario 82: when a slide is not allowed ────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+  g.windState='calm'; g.windTimer=999;
+
+  // in the air
+  g.player.x=600; g.player.y=200; g.player.vx=0; g.player.vy=0;
+  g.player.groundT=0.5; g.player.slideT=0; g.player.slideCooldown=0;
+  g.player.slideKeyWasDown=false; g.player.invuln=999;
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  check('you cannot slide in mid-air', g.player.slideT===0, g.player.slideT);
+
+  // a jump cancels one in progress
+  g.player.x=600; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.groundT=0;
+  g.player.slideT=0; g.player.slideCooldown=0; g.player.slideKeyWasDown=false;
+  g.player.invuln=999;
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  check('sliding', g.player.slideT>0);
+  keys({Space:true});
+  step(1);
+  keys({Space:false});
+  check('a jump cancels the slide', g.player.slideT===0, g.player.slideT);
+}
+
+// ── scenario 83: the low shelf ──────────────────────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+  g.windState='calm'; g.windTimer=999;
+
+  const bar=g.platforms.find(p=>p.lowBar);
+  check('the ridge hangs a low shelf', !!bar, bar&&bar.x);
+  check('...and it runs to the ceiling, so there is no way over',
+        bar.y<100 && bar.y+bar.h>g.GROUND_Y-60, bar.y+'..'+(bar.y+bar.h));
+
+  // walking into it gets you nowhere
+  g.player.x=bar.x-90; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.groundT=0; g.player.facing=1;
+  g.player.slideT=0; g.player.slideCooldown=0;
+  keys({ArrowRight:true});
+  for(let i=0;i<70;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  keys({ArrowRight:false});
+  check('you cannot walk through it', g.player.x+g.PLAYER_W<=bar.x+2,
+        (g.player.x+g.PLAYER_W).toFixed(1)+' vs '+bar.x);
+
+  // sliding does
+  g.player.x=bar.x-120; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.groundT=0; g.player.facing=1;
+  g.player.slideT=0; g.player.slideCooldown=0; g.player.slideKeyWasDown=false;
+  keys({ArrowDown:true});
+  step(1);
+  keys({ArrowDown:false});
+  check('the dino goes flat', g.player.slideT>0);
+  keys({ArrowRight:true});
+  for(let i=0;i<50;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  keys({ArrowRight:false});
+  check('...and slides clean under it', g.player.x>bar.x+bar.w,
+        g.player.x.toFixed(1)+' vs '+(bar.x+bar.w));
+
+  g.drawLowBars();
+  check('the shelf renders its teeth', true);
+}
+
+// ── scenario 84: the frozen pond ────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(7);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+  g.windState='calm'; g.windTimer=999;
+
+  const pond=g.platforms.find(p=>p.crack);
+  check('the ridge lays a pond over a pit', !!pond, pond&&pond.x);
+  check('...and there is a real pit under it',
+        g.lavaPits().some(lp=>lp.x<=pond.x&&lp.x+lp.w>=pond.x+pond.w),
+        JSON.stringify(g.lavaPits()));
+  check('a pond holds longer than a mushroom shelf',
+        g.CRACK_DELAY>g.CRUMBLE_DELAY, g.CRACK_DELAY+' vs '+g.CRUMBLE_DELAY);
+
+  // stand on it
+  const hold=()=>{
+    g.player.x=pond.x+pond.w/2-g.PLAYER_W/2;
+    g.player.y=pond.y-g.PLAYER_H;
+    g.player.vx=0; g.player.invuln=999; g.player.hp=99;
+  };
+  hold(); step(1); hold(); step(1);
+  check('standing on it starts the fracture', pond.crumbleT!==undefined,
+        pond.crumbleT);
+
+  let frames=0;
+  while(!pond.gone && frames<200){ hold(); step(1); frames++; }
+  check('it gives way', pond.gone===true, frames);
+  check('...but not instantly — you get a crossing out of it',
+        frames>=g.CRACK_DELAY*50, frames+' frames');
+
+  // with it gone, the pit underneath is what is left
+  g.player.x=pond.x+pond.w/2-g.PLAYER_W/2;
+  g.player.y=pond.y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.invuln=0; g.player.hp=3;
+  const hp0=g.player.hp;
+  let fell=false;
+  for(let i=0;i<90 && !fell;i++){
+    step(1);
+    if(g.player.hp<hp0) fell=true;
+  }
+  check('and what is under it is the pit', fell, g.player.hp+'/'+hp0);
+
+  // it freezes back over
+  let back=0;
+  while(pond.gone && back<400){
+    g.player.invuln=999; g.player.hp=99; g.player.x=60;
+    g.player.y=g.GROUND_Y-g.PLAYER_H;
+    step(1); back++;
+  }
+  check('the pond freezes back over', pond.gone===false, back);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
