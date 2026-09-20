@@ -154,6 +154,13 @@ function run(opts){
   drawIcicles:()=>drawIcicles(),
   drawFog:()=>drawFog(),
   drawWind:()=>drawWind(),
+  drawGlaze:()=>drawGlaze(),
+  titanSlick:()=>titanSlick(),
+  breathRay:()=>breathRay(),
+  enterBossPhase2:()=>enterBossPhase2(),
+  get BREATH_ARC(){return BREATH_ARC;},
+  get BREATH_HALF_W(){return BREATH_HALF_W;},
+  get BOSS_BREATH_REACH(){return BOSS_BREATH_REACH;},
   get RADIO_H(){return RADIO_H;},
   get windState(){return windState;}, set windState(v){windState=v;},
   get windDir(){return windDir;},     set windDir(v){windDir=v;},
@@ -226,6 +233,7 @@ function run(opts){
   get groundLoaded(){return groundLoaded;},
   get platforms(){return platforms;},
   get GROUND_Y(){return GROUND_Y;}, get PLAYER_H(){return PLAYER_H;},
+  get PLAYER_W(){return PLAYER_W;},
   get GROUND_SRC_Y(){return GROUND_SRC_Y;}, get GROUND_SRC_H(){return GROUND_SRC_H;},
   drawGroundCap:(a,b,c,d,e)=>drawGroundCap(a,b,c,d,e),
   drawPlatforms:()=>drawPlatforms(),
@@ -2870,6 +2878,254 @@ function runSuite(){
     step(1);
   }
   check('the ridge simulates without blowing up', g.STATE==='playing', g.STATE);
+}
+
+// ── scenario 77: the Titan breaks its own armour ────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.boss.introState='active';
+  check('it starts in phase 1', g.boss.phase===1, g.boss.phase);
+  check('...and the floor is merely icy', g.titanSlick()===false);
+
+  // measure the coast before and after the turn, on the SAME frame, because
+  // an absolute number here would only be a guess at what the engine does
+  const coast=()=>{
+    g.player.x=200; g.player.y=g.GROUND_Y-g.PLAYER_H;
+    g.player.vy=0; g.player.groundT=0; g.player.invuln=999;
+    g.player.vx=300;
+    step(1);
+    return g.player.vx;
+  };
+  const before=coast();
+
+  // A clean ceiling to measure against. The coast frames above walk the dino
+  // under the spike at x=250, and one stray warning shake is enough to make
+  // "fewer hanging than before" true with the whole blast deleted.
+  for(const ic of g.icicles) ic.state='hang';
+  const hanging=g.icicles.length;
+  check('the ceiling is loaded before the turn', hanging>0, hanging);
+
+  // half health is the trigger, and nothing else
+  g.player.hp=99; g.player.invuln=999;
+  g.boss.hp=g.boss.maxHp/2;
+  g.player.x=g.boss.x-500;          // clear of the shell blast
+  g.player.y=g.GROUND_Y-g.PLAYER_H;
+  step(1);
+  check('half health turns the fight over', g.boss.phase===2, g.boss.phase);
+  // the ice fight must not flash red and tell the player to parry shots the
+  // Titan never fires
+  const turn=g.radio||g.radioQueue[0];
+  check('the turn speaks in the ice biome voice',
+        !!turn && turn.color==='#7dd3fc', turn && turn.color);
+  check('...and every line still fits the window',
+        !!turn && turn.lines.every(l=>l.length<=40),
+        turn && turn.lines.map(l=>l.length).join(','));
+  check('the shell comes off and takes the whole ceiling with it',
+        g.icicles.filter(i=>i.state==='hang').length===0,
+        hanging+' -> '+g.icicles.filter(i=>i.state==='hang').length);
+  check('...and it calls sentries in', g.boss.summons==='ice_flyer', g.boss.summons);
+  check('the sentries are really there',
+        g.enemies.filter(e=>!e.dead&&e.species==='ice_flyer').length>=2,
+        g.enemies.filter(e=>!e.dead).length);
+
+  // burn off the hit-stop the flip triggers, or the next frames simulate nothing
+  for(let i=0;i<20;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+
+  check('the floor freezes over', g.titanSlick()===true);
+  const after=coast();
+  check('...and you keep sliding longer on it', after>before+1,
+        before.toFixed(1)+' -> '+after.toFixed(1));
+
+  g.drawGlaze(); g.drawBoss(); g.drawBossRage();
+  check('the glaze and the icy rage banner render', true);
+}
+
+// ── scenario 77b: standing in the shell when it goes ────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.boss.introState='active';
+  for(let i=0;i<6;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';   // nothing overhead to blame
+
+  // right beside it, with no i-frames
+  g.player.x=g.boss.x-40; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.invuln=0;
+  const hp0=g.player.hp=6;
+  g.boss.hp=g.boss.maxHp/2;
+  step(1);
+  check('the shell is a real hit if you are inside it', g.player.hp<hp0,
+        hp0+' -> '+g.player.hp);
+  check('...and it chills you too', g.player.chilled>0, g.player.chilled);
+}
+
+// ── scenario 77c: ...but only if you are inside it ──────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.boss.introState='active';
+  for(let i=0;i<6;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+
+  g.player.x=g.boss.x-520; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  g.player.vx=0; g.player.vy=0; g.player.invuln=0;
+  const hp0=g.player.hp=6;
+  g.boss.hp=g.boss.maxHp/2;
+  step(1);
+  check('the shell does not reach across the arena', g.player.hp===hp0,
+        hp0+' -> '+g.player.hp);
+  check('the turn still happened', g.boss.phase===2, g.boss.phase);
+}
+
+// ── scenario 78: the breath stops being a line ──────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.boss.introState='active';
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+
+  // phase 1: the beam never leaves level
+  const seen1=new Set();
+  g.boss.breathCooldown=0.01;
+  for(let i=0;i<200;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=g.boss.x-240; g.player.y=140; g.player.vy=0;
+    step(1);
+    if(g.boss.breathState==='blow') seen1.add(g.boss.breathAngle);
+  }
+  check('phase 1 blows a straight beam', seen1.size===1 && seen1.has(0),
+        [...seen1].join(','));
+
+  // phase 2: it sweeps, and the arc covers the whole declared range
+  g.boss.hp=g.boss.maxHp/2;
+  g.player.x=g.boss.x-500; g.player.y=g.GROUND_Y-g.PLAYER_H;
+  step(1);
+  for(let i=0;i<20;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('it is enraged', g.boss.phase===2);
+
+  let lo=99, hi=-99, sawBlow=false;
+  g.boss.breathState='none'; g.boss.breathCooldown=0.01;
+  for(let i=0;i<260;i++){
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=g.boss.x-240; g.player.y=140; g.player.vy=0;
+    step(1);
+    if(g.boss.breathState==='blow'){
+      sawBlow=true;
+      lo=Math.min(lo,g.boss.breathAngle); hi=Math.max(hi,g.boss.breathAngle);
+    }
+  }
+  check('phase 2 sweeps the beam through an arc', sawBlow && hi-lo>0.6,
+        lo.toFixed(2)+' .. '+hi.toFixed(2));
+  check('...starting above and ending below',
+        lo<-g.BREATH_ARC*0.8 && hi>g.BREATH_ARC*0.8,
+        lo.toFixed(2)+' .. '+hi.toFixed(2)+' arc='+g.BREATH_ARC);
+  check('...and it resets to level between breaths',
+        g.boss.breathState!=='blow' ? g.boss.breathAngle===0 : true,
+        g.boss.breathAngle);
+  g.drawBoss();
+  check('the swept beam renders', true);
+}
+
+// ── scenario 79: the sweep reaches where the line could not ─
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(6);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.boss.introState='active';
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  for(const ic of g.icicles) ic.state='gone';
+
+  const segDist=(px,py,ax,ay,bx,by)=>{
+    const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+    const u=l2>0?Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/l2)):0;
+    return Math.hypot(px-(ax+u*dx),py-(ay+u*dy));
+  };
+
+  // The titan only pins itself to the floor once it is actually running:
+  // forcing introState does not move it, so a ray measured before the first
+  // update is taken off a boss still parked off-screen above the stage.
+  for(let i=0;i<6;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  check('the Titan has taken the floor',
+        Math.abs(g.boss.y-(g.GROUND_Y-g.boss.h/2))<1, g.boss.y);
+
+  // A spot above the muzzle line. The angle is taken from the ray's OWN
+  // origin, not the boss centre — the muzzle sits 0.45*w out to the side,
+  // so measuring from the middle misses by 77px and lands the probe at the
+  // one angle the sweep only touches on its opening instant.
+  g.boss.breathDir=-1; g.boss.breathAngle=0;
+  const flat=g.breathRay();
+  const probeX=g.boss.x-300, probeY=flat.ay-90;
+  const wantAng=Math.atan2(probeY-flat.ay,Math.abs(probeX-flat.ax));
+  check('the probe sits inside the arc the sweep covers',
+        Math.abs(wantAng)<g.BREATH_ARC*0.95,
+        wantAng.toFixed(3)+' vs '+g.BREATH_ARC);
+  check('a straight beam cannot reach above itself',
+        segDist(probeX,probeY,flat.ax,flat.ay,flat.bx,flat.by)>g.BREATH_HALF_W,
+        segDist(probeX,probeY,flat.ax,flat.ay,flat.bx,flat.by).toFixed(1));
+
+  // aimed up, the same spot is inside the beam
+  g.boss.breathAngle=wantAng;
+  const tilted=g.breathRay();
+  check('...but the swept one does',
+        segDist(probeX,probeY,tilted.ax,tilted.ay,tilted.bx,tilted.by)<g.BREATH_HALF_W,
+        segDist(probeX,probeY,tilted.ax,tilted.ay,tilted.bx,tilted.by).toFixed(1));
+
+  // and it really damages there, through the live update path
+  g.boss.phase=2;
+  g.boss.breathState='blow'; g.boss.breathDir=-1;
+  g.boss.breathDur=1.8; g.boss.breathTimer=1.8; g.boss.breathAngle=-g.BREATH_ARC;
+  const hp0=g.player.hp;
+  let hurt=false, sweptPast=false;
+  for(let i=0;i<140 && !hurt;i++){
+    g.player.x=probeX-g.PLAYER_W/2; g.player.y=probeY-g.PLAYER_H/2;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=0;
+    step(1);
+    if(g.boss.breathAngle>wantAng) sweptPast=true;
+    if(g.player.hp<hp0) hurt=true;
+  }
+  check('the arc really swept past the probe', sweptPast||hurt,
+        g.boss.breathAngle.toFixed(3)+' vs '+wantAng.toFixed(3));
+  check('the sweep burns what it passes through', hurt, g.player.hp+'/'+hp0);
+  check('...and chills it', g.player.chilled>0, g.player.chilled);
+}
+
+// ── scenario 80: the other bosses are untouched ─────────────
+{
+  const {g,step}=run();          // volcano stage 1
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('a flyer boss is not a titan', g.boss.kind!=='titan', g.boss.kind);
+  check('its floor never glazes', g.titanSlick()===false);
+  g.boss.introState='active';
+  g.boss.hp=g.boss.maxHp/2;
+  g.player.x=g.boss.x-600;
+  step(1);
+  check('it still turns at half health', g.boss.phase===2, g.boss.phase);
+  check('...and still keeps its own floor', g.titanSlick()===false);
+  g.drawBossRage();
+  check('the red banner still renders for it', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

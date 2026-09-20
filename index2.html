@@ -989,7 +989,7 @@ const LEVELS = [
     checkpoint:1050, parTime:110,
     arena:{start:1000,end:1380},
     boss:{x:1330,triggerX:1240,hp:15,kind:"titan",w:172,h:132,
-          sprite:"boss_frozen.png",
+          sprite:"boss_frozen.png", summons:"ice_flyer",
           name:"BUZUL TİTANI", title:"ZİRVENİN SON BEKÇİSİ"},
   },
   { // ── STAGE 8 — Whiteout Ridge (Frozen Peaks, the approach)
@@ -2180,6 +2180,34 @@ function drawWarped(fn){
 // ─── BOSS: Alpha Pterodactyl guarding the exit gate ───────────
 const BOSS_W=140, BOSS_H=100;
 const BOSS_BREATH_REACH=430;   // how far the Glacier Titan's breath carries
+const BREATH_ARC=0.52;         // radians either side of level, phase 2 only
+const BREATH_HALF_W=34;        // how thick the beam is, measured off its axis
+
+// Distance from a point to a segment. The breath is tested with this rather
+// than as an x-range plus a y-band, because in phase 2 the beam is no longer
+// horizontal — and at angle 0 this is the same band it always was.
+function segDist(px,py,ax,ay,bx,by){
+  const dx=bx-ax, dy=by-ay;
+  const len2=dx*dx+dy*dy;
+  const u=len2>0 ? clamp(((px-ax)*dx+(py-ay)*dy)/len2,0,1) : 0;
+  return Math.hypot(px-(ax+u*dx), py-(ay+u*dy));
+}
+// Where the breath starts and ends, in world space. One source of truth, so
+// the hit test and the drawing can never disagree about where the beam is.
+function breathRay(){
+  const dir=boss.breathDir||-1;
+  const ang=boss.breathAngle||0;
+  const ax=boss.x+dir*boss.w*0.45, ay=boss.y-boss.h*0.18;
+  return {ax, ay,
+          bx:ax+dir*BOSS_BREATH_REACH*Math.cos(ang),
+          by:ay+BOSS_BREATH_REACH*Math.sin(ang)};
+}
+// The Titan's phase 2 glazes the whole floor. It reads as "the arena froze
+// over" because the fight is camera-locked into the arena band anyway.
+function titanSlick(){
+  return !!(boss && !boss.dead && !boss.dying &&
+            boss.kind==="titan" && boss.phase>=2 && boss.introState==="active");
+}
 let boss=null;
 let gateOpen=false;
 let bossShakeTimer=0; // sustained heavier shake on boss death, separate from normal hit-shake decay
@@ -2202,6 +2230,7 @@ function initBoss(){
     diveState:"none", diveTimer:0, diveCooldown:rnd(3,5), diveDir:-1,
     stompCooldown:2.2, walkDir:-1,
     breathState:"none", breathTimer:0, breathCooldown:rnd(2.5,4), breathDir:-1,
+    breathAngle:0, breathDur:1,   // the sweep — stays 0 for the whole of phase 1
     poundCooldown:rnd(5,7),
     wavePhase:rnd(0,Math.PI*2),
     fireCooldown:2.5,      // slow homing lava-ball attack
@@ -2268,6 +2297,27 @@ function finishWorld(){
   if(!anyLeft){ STATE="win"; stateTimer=0; return; }
   STATE="map"; stateTimer=0;
   playPowerUp();
+}
+
+// A mirror sheen over every walking surface while the Titan's floor is
+// frozen, so "you have no grip any more" is something you can see before it
+// is something you discover.
+function drawGlaze(){
+  if(!titanSlick()) return;
+  const pulse=0.5+0.5*Math.sin(t*3);
+  ctx.save();
+  ctx.globalCompositeOperation="lighter";
+  for(const p of platforms){
+    if(p.lavaPit||p.gone) continue;
+    const sx=p.x-camX;
+    if(sx>W||sx+p.w<0) continue;
+    const g=ctx.createLinearGradient(0,p.y,0,p.y+16);
+    g.addColorStop(0,"rgba(223,246,255,"+(0.20+0.10*pulse).toFixed(3)+")");
+    g.addColorStop(1,"rgba(125,211,252,0)");
+    ctx.fillStyle=g;
+    ctx.fillRect(sx,p.y,p.w,16);
+  }
+  ctx.restore();
 }
 
 // ─── THE BLIZZARD ─────────────────────────────────────────────
@@ -4182,7 +4232,7 @@ function drawBoss(){
       ctx.save();
       ctx.globalCompositeOperation="lighter";
       ctx.globalAlpha=0.22+0.12*Math.sin(t*9);
-      ctx.fillStyle="#ff2244";
+      ctx.fillStyle=boss.kind==="titan"?"#7dd3fc":"#ff2244";
       ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
       ctx.restore();
     }
@@ -4196,6 +4246,11 @@ function drawBoss(){
     const bx=dir*boss.w*0.45, by=-boss.h*0.18;
     const reach=BOSS_BREATH_REACH;
     ctx.save();
+    // the sweep is a rotation about the muzzle, so the wedge below is still
+    // authored flat along dir and never had to learn about the arc
+    ctx.translate(bx,by);
+    ctx.rotate(dir*(boss.breathAngle||0));
+    ctx.translate(-bx,-by);
     if(boss.breathState==="wind"){
       const warn=0.4+0.4*Math.sin(t*26);
       ctx.strokeStyle=`rgba(190,230,255,${warn})`; ctx.lineWidth=3;
@@ -4564,20 +4619,25 @@ function drawBossCard(){
 }
 function drawBossRage(){
   if(bossRageTimer<=0) return;
+  // the banner speaks for whichever boss turned, so the ice fight does not
+  // flash red and tell you to parry shots it never fires
+  const icy=!!(boss&&boss.kind==="titan");
   const pulse=0.5+0.5*Math.sin(t*18);
   ctx.save();
   ctx.globalAlpha=clamp(bossRageTimer/2.2,0,1);
-  ctx.fillStyle=`rgba(255,20,50,${0.10+0.10*pulse})`;
+  ctx.fillStyle=icy?`rgba(125,211,252,${0.10+0.10*pulse})`
+                  :`rgba(255,20,50,${0.10+0.10*pulse})`;
   ctx.fillRect(0,0,W,H);
   ctx.textAlign="center";
-  glow("#ff2244",18+14*pulse);
+  glow(icy?"#7dd3fc":"#ff2244",18+14*pulse);
   ctx.font="bold 34px 'Courier New',monospace";
-  ctx.fillStyle="#ff4455";
-  ctx.fillText("ÇILGINA DÖNDÜ!",W/2,H*0.24);
+  ctx.fillStyle=icy?"#bae6fd":"#ff4455";
+  ctx.fillText(icy?"ZIRHINI KIRDI!":"ÇILGINA DÖNDÜ!",W/2,H*0.24);
   noGlow();
   ctx.font="bold 14px 'Courier New',monospace";
-  ctx.fillStyle="#ffccd4";
-  ctx.fillText("PEMBE ATIŞLARI DASH İLE SAVUŞTUR",W/2,H*0.24+26);
+  ctx.fillStyle=icy?"#dff6ff":"#ffccd4";
+  ctx.fillText(icy?"ZEMİN BUZ TUTTU — NEFESİ SÜPÜRÜYOR"
+                  :"PEMBE ATIŞLARI DASH İLE SAVUŞTUR",W/2,H*0.24+26);
   ctx.restore();
   ctx.textAlign="left";
 }
@@ -5133,8 +5193,11 @@ function update(dt){
   // alternates a settle frame and a resolve frame — so reading it directly
   // gave ice back half its grip. Use a short coyote window instead.
   const onIce=isIce()&&player.groundT<0.12;
-  const grip=onIce?3.2:10;
-  const slide=onIce?0.72:0.05;
+  // the Titan's phase 2 glazes the floor: less bite and a much longer coast,
+  // so the arena it dragged you into stops being footing at all
+  const slick=onIce&&titanSlick();
+  const grip=onIce?(slick?1.9:3.2):10;
+  const slide=onIce?(slick?0.88:0.72):0.05;
   if(player.chilled>0) player.chilled-=dt;
   const topSpd=MOVE_SPD*(player.chilled>0?0.45:1);
   if(left) { player.vx+= (-topSpd-player.vx)*Math.min(1,dt*grip); player.facing=-1; }
@@ -6005,26 +6068,45 @@ function update(dt){
           }
         } else if(boss.breathState==="wind"){
           boss.breathTimer-=dt;
-          if(boss.breathTimer<=0){ boss.breathState="blow"; boss.breathTimer=rage?1.3:1.0; }
+          if(boss.breathTimer<=0){
+            boss.breathState="blow";
+            // the sweep needs longer than the straight beam, or the arc goes
+            // past you faster than you can read it
+            boss.breathDur=rage?1.8:1.0;
+            boss.breathTimer=boss.breathDur;
+            // every blow opens level. In phase 2 the sweep below takes over
+            // from the first frame and drives the angle itself, so there is
+            // nothing to seed here; in phase 1 it simply stays level.
+            boss.breathAngle=0;
+          }
         } else {
           boss.breathTimer-=dt;
-          const bx=boss.x+boss.breathDir*boss.w*0.45;
-          const by=boss.y-boss.h*0.18;
-          const reach=BOSS_BREATH_REACH;
-          // anything inside the band is frozen and hurt
-          const lo=boss.breathDir>0?bx:bx-reach, hi=boss.breathDir>0?bx+reach:bx;
+          if(rage){
+            // One linear sweep across the whole arc over the blow: it starts
+            // aimed over your head and rakes down past you to the floor, so
+            // the dodge is a jump timed as it arrives rather than a place to
+            // stand. It ends below the standing line, which is what stops the
+            // attack from simply parking on the player.
+            const p=clamp(1-boss.breathTimer/boss.breathDur,0,1);
+            boss.breathAngle=-BREATH_ARC+p*2*BREATH_ARC;
+          }
+          const r=breathRay();
           if(player.invuln<=0 &&
-             player.x+PLAYER_W>lo && player.x<hi &&
-             Math.abs((player.y+PLAYER_H/2)-by)<34){
+             segDist(player.x+PLAYER_W/2, player.y+PLAYER_H/2,
+                     r.ax,r.ay,r.bx,r.by) < BREATH_HALF_W){
             player.chilled=1.4;
             takeDamage("enemy");
           }
-          if(Math.random()<dt*90) spawnParticles(
-            (bx+boss.breathDir*rnd(0,reach))-camX, by+rnd(-16,16), 1,
-            ["#dff6ff","#7dd3fc","#ffffff"],
-            {minSpd:40,maxSpd:160,minLife:0.2,maxLife:0.6,type:"square",gravity:-20,minSz:2,maxSz:5});
+          if(Math.random()<dt*90){
+            const u=Math.random();
+            spawnParticles(
+              (r.ax+(r.bx-r.ax)*u)-camX, r.ay+(r.by-r.ay)*u+rnd(-16,16), 1,
+              ["#dff6ff","#7dd3fc","#ffffff"],
+              {minSpd:40,maxSpd:160,minLife:0.2,maxLife:0.6,type:"square",gravity:-20,minSz:2,maxSz:5});
+          }
           if(boss.breathTimer<=0){
             boss.breathState="none";
+            boss.breathAngle=0;
             boss.breathCooldown=rnd(2.6,4.2);
           }
         }
@@ -6403,8 +6485,35 @@ function killEnemy(e){
 // The turn: the Alpha stops pacing itself, the shots come in threes, and the
 // screen says so. Everything it changes is read off boss.phase, so a
 // mini-boss can opt in by simply having the same field.
+// The Titan's turn is its own: it cracks the armour off itself, the shell
+// comes apart as a shard blast, and the ceiling it was saving comes down
+// with it. Everything after this reads off boss.phase like every other boss.
+function shatterTitanArmour(){
+  playExplosion();
+  dropAllIcicles();
+  const cx=boss.x, cy=boss.y;
+  // the shell is a real hit if you are standing in it
+  if(player.invuln<=0 &&
+     Math.hypot((player.x+PLAYER_W/2)-cx,(player.y+PLAYER_H/2)-cy)<150){
+    player.chilled=1.4;
+    takeDamage("enemy");
+  }
+  for(let i=0;i<34;i++){
+    const a=(i/34)*Math.PI*2;
+    particles.push({
+      x:cx-camX+Math.cos(a)*boss.w*0.4, y:cy+Math.sin(a)*boss.h*0.4,
+      vx:Math.cos(a)*rnd(140,420), vy:Math.sin(a)*rnd(140,420)-40,
+      life:1, maxLife:rnd(0.4,0.9),
+      color:["#dff6ff","#7dd3fc","#bae6fd","#ffffff"][i%4],
+      size:rnd(3,8), type:"square", gravity:300
+    });
+  }
+  spawnFloatingText(cx-camX,cy-boss.h*0.7,"ZIRH PARÇALANDI!","#dff6ff",18);
+}
+
 function enterBossPhase2(){
   boss.phase=2;
+  const icy=boss.kind==="titan";
   // stage 1's drone comes apart: same fight, visibly wrecked
   if(boss.rageArt) boss.art=boss.rageArt;
   // ...and a boss that can call for help does it here, once
@@ -6419,11 +6528,19 @@ function enterBossPhase2(){
   feverFlash=Math.max(feverFlash,0.7);
   startSiren(1.6);
   playExplosion();
-  spawnParticles(boss.x-camX,boss.y,34,["#ff2244","#ff8800","#ffffff","#ff2fb0"],
-    {minSpd:120,maxSpd:360,minLife:0.4,maxLife:1.0,type:"square",gravity:120,minSz:3,maxSz:8});
-  queueRadio(null,"ACİL DURUM",
-    ["ALFA ÇILGINA DÖNDÜ!","Pembe atışları DASH ile savuşturabilirsin!"],
-    {color:"#ff2244",urgent:true,hold:3.6});
+  if(icy){
+    shatterTitanArmour();
+    queueRadio(null,"ACİL DURUM",
+      ["ZIRHINI KIRDI — ZEMİN BUZ TUTTU!","Nefes tepeden aşağı süpürüyor.",
+       "Geçerken üstünden atla!"],
+      {color:"#7dd3fc",urgent:true,hold:4.0});
+  } else {
+    spawnParticles(boss.x-camX,boss.y,34,["#ff2244","#ff8800","#ffffff","#ff2fb0"],
+      {minSpd:120,maxSpd:360,minLife:0.4,maxLife:1.0,type:"square",gravity:120,minSz:3,maxSz:8});
+    queueRadio(null,"ACİL DURUM",
+      ["ALFA ÇILGINA DÖNDÜ!","Pembe atışları DASH ile savuşturabilirsin!"],
+      {color:"#ff2244",urgent:true,hold:3.6});
+  }
 }
 
 // A boss with a `summons` species calls a pair of them in on its phase
@@ -6446,10 +6563,15 @@ function summonSwarm(species,n){
       hitFlash:0, dying:false, deathTimer:0, dead:false, beamTick:0,
       arenaEnemy:false
     });
-    spawnParticles(sx-camX,sy,14,["#34d399","#a7f3d0","#ffffff"],
+    // the call-in takes the summoner's colour, so the ice fight does not
+    // flash canopy green
+    const icy=boss.kind==="titan";
+    spawnParticles(sx-camX,sy,14,
+      icy?["#7dd3fc","#dff6ff","#ffffff"]:["#34d399","#a7f3d0","#ffffff"],
       {minSpd:80,maxSpd:240,minLife:0.3,maxLife:0.7,type:"circle",gravity:40});
   }
-  spawnFloatingText(boss.x-camX,boss.y-60,"SÜRÜ ÇAĞRILDI!","#34d399",16);
+  spawnFloatingText(boss.x-camX,boss.y-60,"SÜRÜ ÇAĞRILDI!",
+    boss.kind==="titan"?"#7dd3fc":"#34d399",16);
   playPowerUp();
 }
 
@@ -6675,6 +6797,7 @@ function loop(now){
   drawMagmaBursts();
   drawPlatforms();
   drawVines();
+  drawGlaze();
   drawIcicles();
   drawFog();
   drawCheckpoint();
