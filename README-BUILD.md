@@ -27,7 +27,40 @@ Verify a bundle before sending it — the suite runs against any build:
 node smoke-test.js neon-dino-age.html
 ```
 
-## 2. The folder
+## 2. A link (what to send a tablet)
+
+A file is not a link. `file:///C:/...` only exists on the machine it is on,
+and a `.html` attachment arriving through a messaging app is handed to the OS
+as a document — on Android and iOS tapping it usually opens a file viewer or
+a download screen, not a browser. For a tablet, publish it and send a URL.
+
+The repository is already a complete static site: `index2.html` reads its art
+through `assetURL()`, which falls back to the plain filename, and every one
+of those files is tracked. So GitHub Pages can serve the folder as it stands
+— **no bundle, no copies, no duplicated art.**
+
+```
+git remote add origin https://github.com/<user>/<repo>.git
+git push -u origin main
+```
+
+then **Settings → Pages → Deploy from a branch → `main` / `(root)` → Save**.
+A minute later the game is at:
+
+```
+https://<user>.github.io/<repo>/index2.html
+```
+
+`.nojekyll` at the root is what stops Pages running the file list through
+Jekyll before serving it. The bare URL `…/<repo>/` serves the root
+`index.html`, which is the plain arcade build — RESCUE PROTOCOL is the deep
+link above. Touch controls detect the device on their own; `?touch=1` on the
+end forces them on for testing from a desktop.
+
+Rebuilding the bundle is not part of this route. Push a change and Pages
+picks it up; that is the whole deploy.
+
+## 3. The folder
 
 Zip the whole directory. Smaller to transfer and the art stays editable, but
 the other person has to keep the files together.
