@@ -1,0 +1,111 @@
+# Sending the game to someone
+
+`index2.html` loads its art from the PNGs sitting next to it. Mail that file
+on its own and the other person gets a game with no graphics — which is
+exactly what happens if you attach only the HTML.
+
+There are two ways to hand it over.
+
+## 1. One file (what to send)
+
+```
+node build-standalone.js
+```
+
+writes **`neon-dino-age.html`** (~7.4 MB): the game with every sprite inlined
+as a `data:` URI. It needs no folder, no server and no internet. Send that
+one file; double-clicking it works on Windows, macOS, Android and iPad.
+
+The game reads its art through `assetURL(name)`, which checks
+`window.__ASSETS` first and falls back to the filename. That is the whole
+mechanism: the bundle defines `window.__ASSETS`, the source build does not,
+and the same `index2.html` serves both.
+
+Verify a bundle before sending it — the suite runs against any build:
+
+```
+node smoke-test.js neon-dino-age.html
+```
+
+## 2. The folder
+
+Zip the whole directory. Smaller to transfer and the art stays editable, but
+the other person has to keep the files together.
+
+---
+
+## Re-encoding the art
+
+`build-standalone.js` only assembles; the encoded art lives in
+`assets-inline.json`. **Re-run this step whenever the art changes**, then
+rebuild. It uses Windows Imaging Component — no npm packages.
+
+Two rules the script follows and you should keep:
+
+- **Four sheets keep their exact pixel grid**: `ground.png`,
+  `forest_ground.png`, `ice_ground.png` and `ice_icicle.png`. The game samples
+  hard-coded source rows out of them (`GROUND_SRC_Y`, the biome `cap` bands,
+  the icicle's source rect), so rescaling them silently moves the walking
+  surface off the collision line.
+- Everything else is only ever drawn small, so sprites go to 384px on the
+  long edge and the two backdrops to 640px as JPEG.
+
+```powershell
+Add-Type -AssemblyName PresentationCore
+$root = "C:\Users\Bago\Desktop\DOSYALAR\ŞİRKET YAPILANMA\YAPAY ZEKA\VS_CODE\BAGO_DİNO GAME 1"
+$keepFull = @("ground.png","forest_ground.png","ice_ground.png","ice_icicle.png")
+$asJpeg   = @("forest_bg.png","ice_bg.png")
+$skip     = @("portal.jpg")   # only the onerror fallback; portal.png is bundled
+
+$html = Get-Content (Join-Path $root "index2.html") -Raw
+$names = [regex]::Matches($html, '"([\w./-]+\.(?:png|jpg|jpeg|webp))"') |
+         ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+
+$out = @{}
+foreach ($n in $names) {
+  if ($skip -contains $n) { continue }
+  $p = Join-Path $root $n
+  if (-not (Test-Path $p)) { Write-Output ("  missing " + $n); continue }
+  $dec = [System.Windows.Media.Imaging.BitmapDecoder]::Create(
+           (New-Object System.Uri($p)), 'None', 'OnLoad')
+  $fr = $dec.Frames[0]
+  $img = [System.Windows.Media.Imaging.BitmapSource]$fr
+  $maxDim = if ($keepFull -contains $n) { 0 } elseif ($asJpeg -contains $n) { 640 } else { 384 }
+  if ($maxDim -gt 0) {
+    $big = [Math]::Max($fr.PixelWidth, $fr.PixelHeight)
+    if ($big -gt $maxDim) {
+      $s = $maxDim / $big
+      $img = New-Object System.Windows.Media.Imaging.TransformedBitmap(
+               $fr, (New-Object System.Windows.Media.ScaleTransform($s, $s)))
+    }
+  }
+  if ($asJpeg -contains $n) {
+    $enc = New-Object System.Windows.Media.Imaging.JpegBitmapEncoder
+    $enc.QualityLevel = 78
+    $mime = "image/jpeg"
+  } else {
+    $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+    $mime = "image/png"
+  }
+  $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($img))
+  $ms = New-Object System.IO.MemoryStream
+  $enc.Save($ms); $bytes = $ms.ToArray(); $ms.Close()
+  $out[$n] = "data:$mime;base64," + [Convert]::ToBase64String($bytes)
+  Write-Output ("  {0,-24} {1,4}x{2,-4} -> {3,6} KB" -f $n, $img.PixelWidth, $img.PixelHeight, [int]($bytes.Length/1024))
+}
+$payload = "{" + (($out.Keys | Sort-Object | ForEach-Object { '"' + $_ + '":"' + $out[$_] + '"' }) -join ",") + "}"
+Set-Content -Path (Join-Path $root "assets-inline.json") -Value $payload -Encoding utf8 -NoNewline
+```
+
+(`Set-Content -Encoding utf8` writes a BOM; the builder strips it.)
+
+## Playing on a tablet
+
+Touch is detected automatically and an on-screen pad appears in a stage:
+left/right on the left, FIRE and JUMP on the right, DASH above them. Hold
+JUMP for the jetpack. A thumb sliding from one button to another hands the
+key over rather than sticking.
+
+Off-stage there are no buttons, because every other screen wants one tap: tap
+a node on the mission map to start that world, and tap anywhere to confirm a
+debrief, spend a continue, or restart after a game over.

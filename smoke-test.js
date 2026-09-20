@@ -27,7 +27,12 @@ const path=require('path');
 
 const TARGET=path.resolve(process.argv[2]||path.join(__dirname,'index2.html'));
 const html=fs.readFileSync(TARGET,'utf8');
-const body=html.match(/<script>([\s\S]*)<\/script>/)[1];
+// A build can carry more than one script block: the standalone bundle puts
+// its inlined art in a tag of its own ahead of the game. Take them all, in
+// order, instead of greedily swallowing the first closing tag.
+const blocks=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]);
+if(!blocks.length) throw new Error('no <script> block in '+TARGET);
+const body=blocks.join('\n;\n');
 
 let FIRE_ONLOAD=true;      // flipped by the driver at the bottom
 let failures=0, checks=0;
@@ -125,12 +130,21 @@ function run(opts){
   get laser(){return laser;},
   get lavaBalls(){return lavaBalls;},
   get shockwaves(){return shockwaves;},
+  get magmaBursts(){return magmaBursts;},
   get SPECIES(){return SPECIES;},
   get vines(){return vines;},
   get fogY(){return fogY;}, set fogY(v){fogY=v;},
   get icicles(){return icicles;},
   get ENEMY_HP(){return ENEMY_HP;},
   isIce:()=>isIce(),
+  get touchMode(){return touchMode;}, set touchMode(v){touchMode=v;},
+  keyDown:(code)=>!!K[code],
+  touchButtons:()=>touchButtons(),
+  touchButtonAt:(x,y)=>touchButtonAt(x,y),
+  touchPressAt:(pid,p)=>touchPressAt(pid,p),
+  touchRelease:(pid)=>touchRelease(pid),
+  drawTouchPad:()=>drawTouchPad(),
+  assetURL:(n)=>assetURL(n),
   dropAllIcicles:()=>dropAllIcicles(),
   drawIcicles:()=>drawIcicles(),
   drawFog:()=>drawFog(),
@@ -1245,7 +1259,13 @@ function runSuite(){
   g.loadLevel(1);
   g.player.hp=99;
   step(5);
+  // this scenario runs with invuln at zero, so every other hazard on the
+  // stage is a false failure waiting to happen
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const quiet=()=>{ g.magmaBursts.length=0; g.lavaBalls.length=0; };
   const putWave=()=>{
+    quiet();
     g.shockwaves.length=0;
     g.shockwaves.push({x:g.player.x+53/2, dir:1, life:0});
   };
@@ -1255,7 +1275,7 @@ function runSuite(){
   const hp1=g.player.hp;
   g.player.invuln=0;
   putWave();
-  for(let i=0;i<4 && g.player.hp===hp1;i++) step(1);
+  for(let i=0;i<4 && g.player.hp===hp1;i++){ quiet(); step(1); }
   check('a shockwave hits a player standing on the floor', g.player.hp<hp1,
         hp1+' -> '+g.player.hp);
 
@@ -1268,6 +1288,7 @@ function runSuite(){
   const hp2=g.player.hp;
   putWave();
   for(let i=0;i<4;i++){
+    quiet();
     g.player.invuln=0;
     g.player.y=hopY; g.player.vy=-200;   // rising, so never grounded
     step(1);
@@ -2334,6 +2355,105 @@ function runSuite(){
   click(open.mx*900, open.my*506);
   check('clicking an open node starts it', g.STATE==='playing', g.STATE);
   check('...and it is the one that was clicked', g.worldIndex===0, g.worldIndex);
+}
+
+// ── scenario 66: the on-screen pad ───────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.touchMode=true;
+  g.startWorld(0);
+  step(3);
+  const btns=g.touchButtons();
+  check('the pad has a full set of controls', btns.length===5, btns.length);
+  const ids=btns.map(b=>b.id).sort().join(',');
+  check('...left, right, jump, fire and dash',
+        ids==='DASH,FIRE,JUMP,LEFT,RIGHT', ids);
+  check('every button sits inside the canvas',
+        btns.every(b=>b.x-b.r>=0&&b.x+b.r<=900&&b.y-b.r>=0&&b.y+b.r<=506));
+  // no two buttons may overlap, or a thumb lands on both
+  let overlap='';
+  for(let i=0;i<btns.length;i++) for(let j=i+1;j<btns.length;j++){
+    const a=btns[i],b=btns[j];
+    if(Math.hypot(a.x-b.x,a.y-b.y) < a.r+b.r) overlap+=' '+a.id+'/'+b.id;
+  }
+  check('no two buttons overlap', overlap==='', overlap);
+
+  // pressing one sets the very same key the keyboard would
+  const right=btns.find(b=>b.id==='RIGHT');
+  check('a press lands on the right button',
+        g.touchButtonAt(right.x,right.y).id==='RIGHT');
+  check('empty space is not a button', g.touchButtonAt(450,40)===null);
+  g.touchPressAt(1,{x:right.x,y:right.y});
+  check('holding RIGHT is holding the arrow key', g.keyDown('ArrowRight')===true);
+  // and it actually moves the dino
+  const x0=g.player.x;
+  for(let i=0;i<20;i++){ g.player.invuln=999; step(1); }
+  check('...and the dino runs', g.player.x>x0+5, (g.player.x-x0).toFixed(1));
+  g.touchRelease(1);
+  check('letting go releases the key', g.keyDown('ArrowRight')===false);
+
+  // two thumbs at once: run and jump
+  const jump=btns.find(b=>b.id==='JUMP');
+  g.touchPressAt(1,{x:right.x,y:right.y});
+  g.touchPressAt(2,{x:jump.x,y:jump.y});
+  check('two fingers hold two keys',
+        g.keyDown('ArrowRight')&&g.keyDown('Space'));
+  g.touchRelease(2);
+  check('releasing one leaves the other held',
+        g.keyDown('ArrowRight')&&!g.keyDown('Space'));
+  // sliding a thumb from one button to another hands the key over
+  g.touchPressAt(1,{x:jump.x,y:jump.y});
+  check('sliding between buttons swaps the key',
+        !g.keyDown('ArrowRight')&&g.keyDown('Space'));
+  g.touchRelease(1);
+
+  g.drawTouchPad();
+  check('the pad renders', true);
+}
+
+// ── scenario 67: the pad knows when to stay out of the way ───
+{
+  const {g,step,drawStats}=run({map:true});
+  g.touchMode=true;
+  // on the map the pad must not be drawn over the destinations
+  drawStats.images.length=0;
+  const btns=g.touchButtons();
+  g.drawTouchPad();
+  check('no pad on the mission select screen', g.STATE==='map');
+  // (drawTouchPad returns early off-stage; if it did not, a thumb resting on
+  // a button would sit on top of a map node)
+  g.startWorld(0);
+  step(2);
+  check('the pad is for stages', g.STATE==='playing');
+  g.drawTouchPad();
+  check('it renders in a stage', true);
+
+  // with touch off entirely, nothing is drawn and nothing is pressed
+  g.touchMode=false;
+  g.touchPressAt(7,{x:btns[0].x,y:btns[0].y});
+  g.drawTouchPad();
+  check('a keyboard player gets no pad', true);
+}
+
+// ── scenario 68: the game can be bundled into one file ───────
+{
+  const {g,sandbox}=run({map:true});
+  const inlined=sandbox.window.__ASSETS;
+  if(inlined){
+    // running against the standalone build
+    check('the bundle carries its art', Object.keys(inlined).length>10,
+          Object.keys(inlined).length);
+    check('every entry is a data URI',
+          Object.values(inlined).every(v=>/^data:image\//.test(v)));
+    check('a sprite request resolves to inlined art',
+          /^data:image\//.test(g.assetURL('baby.png')), g.assetURL('baby.png').slice(0,24));
+  } else {
+    // running against the source, which loads from sibling files
+    check('the source build asks for files by name',
+          g.assetURL('baby.png')==='baby.png', g.assetURL('baby.png'));
+    check('an unknown name is passed through untouched',
+          g.assetURL('nope.png')==='nope.png', g.assetURL('nope.png'));
+  }
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

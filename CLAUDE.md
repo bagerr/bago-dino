@@ -33,12 +33,27 @@ A ~900×506 Canvas game rendered with plain 2D context calls — no framework, n
 
 Open the file directly in a browser to test — there's no dev server. Controls: arrows/WASD to move, Space/W/Up to jump (hold to jetpack), F/J to fire, Shift to air-dash.
 
+### Shipping it, and playing it on a tablet
+
+See [README-BUILD.md](README-BUILD.md). Two things matter here.
+
+**The game is not self-contained on its own.** `index2.html` loads art from sibling files, so sending that file alone gives the other person a game with no graphics. `node build-standalone.js` writes `neon-dino-age.html` with every sprite inlined as a `data:` URI. The mechanism is one function: `assetURL(name)` checks `window.__ASSETS` and falls back to the filename, so the same source serves both the folder build and the bundle. **Every new `new Image().src` must go through `assetURL()`** or that sprite will be missing from every bundle. `build-standalone.js` fails loudly when a referenced asset is not in the manifest, which is the backstop.
+
+Four sheets must keep their exact pixel grid when the art is re-encoded — `ground.png`, `forest_ground.png`, `ice_ground.png`, `ice_icicle.png` — because the game samples hard-coded source rows out of them. Rescaling one moves the walking surface off the collision line without any error.
+
+Inlined art also stops tainting the canvas the way a `file://` image does, so `computeSpriteBBox` measures properly in the bundle.
+
+**Touch.** `touchMode` is detected from the device (or forced with `?touch=1`). The on-screen pad drives the same `K[]` table the keyboard does, so nothing downstream of input knows a finger is involved; buttons are hit-tested in canvas space, so they line up at any window size. The pad is drawn only in a stage — every other screen wants a single tap instead, which is why a tap confirms a debrief or a continue and a tap on a map node starts that world.
+
 ### Testing
 
 ```
-node smoke-test.js            # tests index2.html — the default
-node smoke-test.js index.html # or any other build
+node smoke-test.js                    # tests index2.html — the default
+node smoke-test.js index.html         # or any other build
+node smoke-test.js neon-dino-age.html # including the bundle you are about to send
 ```
+
+Run it against the bundle before sending one: it proves the file actually works rather than merely that it built. The harness concatenates **every** `<script>` block, because the bundle keeps its inlined art in a tag of its own.
 
 [smoke-test.js](smoke-test.js) is the whole test setup: no framework, no dependencies, no dev server, one file. Run it after **every** change to either build; it is far faster than clicking through three stages by hand and it is the only practical way to catch runtime errors (TDZ, undefined refs, stage-transition breakage). Exit code is 0 only if every check in both passes passed, so it drops straight into a hook or CI if you ever want one.
 

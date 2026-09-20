@@ -11,3 +11,5 @@ node_modules/
 # scratch builds — the real game is index.html / index2.html
 *.bak
 broken.html
+assets-inline.json
+neon-dino-age.html

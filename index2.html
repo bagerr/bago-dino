@@ -2,11 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>NEON DINO-AGE — RESCUE PROTOCOL</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden;font-family:'Courier New',monospace}
-canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+html,body{height:100%;overscroll-behavior:none}
+body{background:#000;display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden;
+     font-family:'Courier New',monospace;
+     /* a game, not a document: no text selection, no double-tap zoom, no
+        rubber-band scrolling when a thumb slides off a button */
+     -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+     touch-action:none}
+canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}
 </style>
 </head>
 <body>
@@ -37,10 +46,99 @@ function resize(){
 resize(); window.addEventListener("resize", resize);
 const ctx = C.getContext("2d");
 
+// ─── ASSETS ─────────────────────────────────────────────────
+// Every image the game loads is asked for by name through here. Left alone
+// it returns the name, so the game runs from a folder exactly as before. A
+// build can define window.__ASSETS = {"baby.png":"data:image/png;base64,…"}
+// ahead of this script and the whole game becomes one sendable file with no
+// sibling files to lose.
+//
+// Inlined art has a second benefit: a data: URI does not taint the canvas the
+// way a file:// image does, so computeSpriteBBox can actually measure a
+// sprite instead of falling back to its full frame.
+function assetURL(name){
+  const m = (typeof window!=="undefined") && window.__ASSETS;
+  return (m && m[name]) || name;
+}
+
 // ─── INPUT ──────────────────────────────────────────────────
 const K = {};
 window.addEventListener("keydown", e => { K[e.code] = true; e.preventDefault&&["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)&&e.preventDefault(); });
 window.addEventListener("keyup",  e => { K[e.code] = false; });
+
+// ─── TOUCH CONTROLS ─────────────────────────────────────────
+// A tablet has no keyboard, so the pad drives the SAME K[] table the keys
+// do. Nothing downstream of input has to know a finger is involved.
+//
+// The buttons live in canvas space and are hit-tested there, so they line up
+// no matter how the canvas has been scaled to fit the screen.
+let touchMode=false;
+try{
+  touchMode = ("ontouchstart" in window) ||
+              (navigator && navigator.maxTouchPoints>0) ||
+              /[?&]touch=1/.test((location&&location.search)||"");
+}catch(e){ touchMode=false; }
+const TOUCH_KEYS={LEFT:"ArrowLeft", RIGHT:"ArrowRight", JUMP:"Space",
+                  FIRE:"KeyF", DASH:"ShiftLeft"};
+function touchButtons(){
+  const pad=16, r=40;
+  return [
+    {id:"LEFT",  x:pad+r,        y:H-pad-r,       r, label:"◀"},
+    {id:"RIGHT", x:pad+r*3+10,   y:H-pad-r,       r, label:"▶"},
+    {id:"FIRE",  x:W-pad-r*3-10, y:H-pad-r,       r, label:"ATEŞ"},
+    {id:"JUMP",  x:W-pad-r,      y:H-pad-r,       r, label:"ZIPLA"},
+    {id:"DASH",  x:W-pad-r*2+6,  y:H-pad-r*3-4,   r:32, label:"DASH"},
+  ];
+}
+function touchButtonAt(x,y){
+  for(const b of touchButtons()){
+    // a generous hit box — thumbs are not precise, and a near miss that does
+    // nothing is the single most frustrating thing about on-screen controls
+    if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return b;
+  }
+  return null;
+}
+const touchHeld=new Map();   // pointerId -> button id
+function touchSet(id,down){
+  const code=TOUCH_KEYS[id];
+  if(code) K[code]=down;
+}
+function touchRelease(pid){
+  const was=touchHeld.get(pid);
+  if(was===undefined) return;
+  touchHeld.delete(pid);
+  // only let go of the key if no other finger is still on that button
+  for(const v of touchHeld.values()) if(v===was) return;
+  touchSet(was,false);
+}
+function touchPressAt(pid,p){
+  const b=touchButtonAt(p.x,p.y);
+  const was=touchHeld.get(pid);
+  if(b && was===b.id) return;
+  if(was!==undefined) touchRelease(pid);
+  if(b){ touchHeld.set(pid,b.id); touchSet(b.id,true); }
+}
+function drawTouchPad(){
+  if(!touchMode) return;
+  if(STATE!=="playing"&&STATE!=="warp") return;
+  ctx.save();
+  for(const b of touchButtons()){
+    const held=[...touchHeld.values()].includes(b.id);
+    ctx.globalAlpha=held?0.55:0.26;
+    ctx.fillStyle=held?"#e879f9":"#0b0a18";
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=held?0.95:0.5;
+    ctx.strokeStyle=held?"#ffffff":"#8fa0c8"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.stroke();
+    ctx.globalAlpha=held?1:0.8;
+    ctx.fillStyle="#e8ecff";
+    ctx.font="bold "+(b.label.length>2?11:20)+"px 'Courier New',monospace";
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText(b.label,b.x,b.y);
+  }
+  ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+  ctx.restore();
+}
 
 // ─── UTILS ──────────────────────────────────────────────────
 function rnd(a,b){ return a + Math.random()*(b-a); }
@@ -67,18 +165,50 @@ function canvasPoint(ev){
   return {x:(ev.clientX-r.left)*(W/r.width), y:(ev.clientY-r.top)*(H/r.height)};
 }
 window.addEventListener("pointerdown", ev=>{
-  if(STATE!=="map"||mapStampTimer>0) return;
   const p=canvasPoint(ev);
   if(!p) return;
-  for(let i=0;i<WORLDS.length;i++){
-    const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
-    if(Math.hypot(p.x-nx,p.y-ny)>38) continue;
-    if(!worldState(i).playable){ playPew(); return; }
-    mapSel=i;
-    startWorld(i);
+  if(ev.preventDefault) ev.preventDefault();
+
+  // in a stage, the pad owns the screen
+  if(STATE==="playing"||STATE==="warp"){
+    if(touchMode) touchPressAt(ev.pointerId===undefined?0:ev.pointerId,p);
     return;
   }
+  // the map: tap a destination
+  if(STATE==="map"){
+    if(mapStampTimer>0) return;
+    for(let i=0;i<WORLDS.length;i++){
+      const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
+      if(Math.hypot(p.x-nx,p.y-ny)>38) continue;
+      if(!worldState(i).playable){ playPew(); return; }
+      mapSel=i;
+      startWorld(i);
+      return;
+    }
+    return;
+  }
+  // every other screen is waiting for a confirm, and a tablet has no ENTER.
+  // A tap anywhere is that confirm.
+  if(STATE==="report"||STATE==="continue"){ K["Enter"]=true; touchConfirm=0.25; }
+  else if(STATE==="dead"||STATE==="win"){ K["KeyR"]=true; touchConfirm=0.25; }
 });
+window.addEventListener("pointerup",   ev=>touchRelease(ev.pointerId===undefined?0:ev.pointerId));
+window.addEventListener("pointercancel",ev=>touchRelease(ev.pointerId===undefined?0:ev.pointerId));
+window.addEventListener("pointermove", ev=>{
+  if(!touchMode) return;
+  if(STATE!=="playing"&&STATE!=="warp") return;
+  const pid=ev.pointerId===undefined?0:ev.pointerId;
+  if(!touchHeld.has(pid) && !(ev.buttons&1) && ev.pressure===undefined) return;
+  const p=canvasPoint(ev);
+  if(p) touchPressAt(pid,p);
+});
+// a synthesised confirm is a tap, not a held key — let it go again
+let touchConfirm=0;
+function updateTouchConfirm(dt){
+  if(touchConfirm<=0) return;
+  touchConfirm-=dt;
+  if(touchConfirm<=0){ K["Enter"]=false; K["KeyR"]=false; }
+}
 window.addEventListener("pointerdown", ensureAudio, {once:true});
 
 // ─── CHIPTUNE BGM (bassline + arpeggio, pure oscillators, loops forever) ──
@@ -1413,7 +1543,7 @@ babySprite.onload=()=>{
   babySpriteBBox=computeSpriteBBox(babySprite,false);
   babySpriteLoaded=true;
 };
-babySprite.src="baby.png";
+babySprite.src=assetURL("baby.png");
 // draws the captive at (cx,cy) scaled to `h` px tall, optionally mirrored
 function drawBaby(cx,cy,h,faceDir,species){
   // a rescued hatchling can be a different species — the canopy's hostage is
@@ -1942,9 +2072,9 @@ portalSprite.onload=()=>{
 };
 portalSprite.onerror=()=>{
   // no portal.png — try the original drop, then give up and stay procedural
-  if(!portalTriedFallback){ portalTriedFallback=true; portalSprite.src="portal.jpg"; }
+  if(!portalTriedFallback){ portalTriedFallback=true; portalSprite.src=assetURL("portal.jpg"); }
 };
-portalSprite.src="portal.png";
+portalSprite.src=assetURL("portal.png");
 
 let portalReveal=0;            // 0→1 materialise animation, driven by gateOpen
 
@@ -2562,7 +2692,7 @@ function drawForestCap(px,worldX,y,w,capH,isFloat,bodyBottom){
 const groundSprite=new Image();
 let groundLoaded=false;
 groundSprite.onload=()=>{ groundLoaded=true; };
-groundSprite.src="ground.png";
+groundSprite.src=assetURL("ground.png");
 const GROUND_SRC_Y=424, GROUND_SRC_W=1024, GROUND_SRC_H=100;
 
 // px is the SCREEN x of the platform's left edge, worldX the same edge in
@@ -3054,12 +3184,12 @@ function drawCoins(){
 const enemy1Sprite = new Image();
 let enemy1Loaded = false;
 enemy1Sprite.onload = () => { enemy1Loaded = true; };
-enemy1Sprite.src = "enemy_fly.png";
+enemy1Sprite.src = assetURL("enemy_fly.png");
 
 const enemyGroundSprite = new Image();
 let enemyGroundLoaded = false;
 enemyGroundSprite.onload = () => { enemyGroundLoaded = true; };
-enemyGroundSprite.src = "enemy_ground.png";
+enemyGroundSprite.src = assetURL("enemy_ground.png");
 
 // shared: one full-bright white/yellow flash frame before a kill actually resolves
 function drawDeathFlash(w,h){
@@ -3228,7 +3358,7 @@ playerSprite.onload = () => {
   playerSpriteBBox = computeSpriteBBox(playerSprite, true);
   playerSpriteLoaded = true;
 };
-playerSprite.src = "bagodino.png";
+playerSprite.src = assetURL("bagodino.png");
 
 // ─── PLAYER SPRITE METRICS ───────────────────────────────────
 // Single source of truth for how large the dino is actually drawn and where
@@ -3371,10 +3501,10 @@ function drawPlayer(){
 // black background disappear (adding zero) and leaves only the energy.
 const beamSprite=new Image(); let beamLoaded=false;
 beamSprite.onload=()=>{ beamLoaded=true; };
-beamSprite.src="beam.png";
+beamSprite.src=assetURL("beam.png");
 const beamHyperSprite=new Image(); let beamHyperLoaded=false;
 beamHyperSprite.onload=()=>{ beamHyperLoaded=true; };
-beamHyperSprite.src="beam_hyper.png";
+beamHyperSprite.src=assetURL("beam_hyper.png");
 const BEAM_CORE_FRAC=0.130, BEAM_HYPER_CORE_FRAC=0.250;
 
 // ─── DRAW CONTINUOUS PLASMA LASER ─────────────────────────────
@@ -3765,7 +3895,7 @@ function drawBossFlameBursts(){
 const bossSprite=new Image();
 let bossSpriteLoaded=false;
 bossSprite.onload=()=>{ bossSpriteLoaded=true; };
-bossSprite.src="enemyboss.png";
+bossSprite.src=assetURL("enemyboss.png");
 
 // ─── DRAW BOSS ───────────────────────────────────────────────
 // The general sprite registry: bosses, forest fauna, anything that names its
@@ -3810,7 +3940,7 @@ function artFor(srcName){
   if(!e){
     e=SPRITE_ART[srcName]={img:new Image(), loaded:false, bbox:null};
     e.img.onload=()=>{ e.bbox=computeSpriteBBox(e.img,false); e.loaded=true; };
-    e.img.src=srcName;
+    e.img.src=assetURL(srcName);
   }
   return e;
 }
@@ -6237,6 +6367,7 @@ function loop(now){
   // the radio is presentation, not simulation: it keeps ticking through a
   // hit-stop freeze and stops dead the moment the stage does
   if(STATE==="playing") updateRadio(dt);
+  updateTouchConfirm(dt);
 
   // The backdrop is screen space — it must NOT ride the vertical camera, or
   // climbing would drag a hole up from under it.
@@ -6283,6 +6414,7 @@ function loop(now){
   drawFeverOverlay();   // full-screen, so outside the world transform
 
   drawHUD();
+  drawTouchPad();
   drawArenaBanners();
   drawBossCard();
   drawBossRage();
