@@ -454,12 +454,19 @@ const LAVA_Y = GROUND_Y + 40;
 // the platform surface all read off it. A new biome is a new entry here plus
 // its art, not a new branch in six draw functions.
 const THEMES={
+  // portalArt names a biome's own rift. A free-floating vortex spins; a
+  // built gate does not — the canopy's portal is a stone arch wrapped in
+  // vines, and rotating it would read as the masonry tumbling.
   volcano:{ liquid:["#ff6a00","#d02800","#4a0400"], surface:"#ffaa33",
             glow:"#ff7700", haze:"255,125,30",
-            spark:["#ff8800","#ffcc00","#ff4400"] },
+            spark:["#ff8800","#ffcc00","#ff4400"],
+            portalArt:null, portalSpin:true,
+            portalBloom:["130,225,255","95,60,225"], portalMote:"#7dffcf" },
   forest: { liquid:["#10b981","#047857","#022c22"], surface:"#6ee7b7",
             glow:"#10b981", haze:"16,185,129",
-            spark:["#6ee7b7","#34d399","#a7f3d0"] },
+            spark:["#6ee7b7","#34d399","#a7f3d0"],
+            portalArt:"forest_portal.png", portalSpin:false,
+            portalBloom:["110,255,180","40,180,120"], portalMote:"#a7f3d0" },
 };
 function levelTheme(){ return (LEVELS[levelIndex]&&LEVELS[levelIndex].theme)||"volcano"; }
 function themeOf(){ return THEMES[levelTheme()]||THEMES.volcano; }
@@ -1923,6 +1930,7 @@ function initBoss(){
   lavaBalls=[];
   bossFlameBursts=[];
   shockwaves=[];
+  { const pa=themeOf().portalArt; if(pa) artFor(pa); }   // start the rift download early
   if(boss) artFor(boss.art);            // start the download early
   if(boss&&boss.rageArt) artFor(boss.rageArt);
   bossIntroTriggered=false;
@@ -2034,6 +2042,7 @@ function drawFog(){
 // this runtime state can live on them directly.
 const CRUMBLE_DELAY=0.55, CRUMBLE_RESPAWN=2.8;
 const BOUNCE_VY=-760;
+const BOUNCE_FUEL=0.45;   // a fixed top-up per bounce, not a per-frame trickle
 function updateCrumbles(dt){
   for(const p of platforms){
     if(!p.crumble) continue;
@@ -2431,7 +2440,7 @@ function drawPlatforms(){
       // that sprite never loads. Once the real rift is on screen it must not
       // be drawn at all — portal.png has transparent gaps, so the arch showed
       // through the swirl as a door silhouette behind it.
-      const showArch = !(portalLoaded && gateOpen);
+      const showArch = !(gateOpen && portalArtNow());
       if(showArch){
         const portalColor= gateOpen ? "#00ff88" : "#442244";
         glow(portalColor, gateOpen?26:8);
@@ -2487,7 +2496,7 @@ function drawPlatforms(){
 
       // sign board + live rescue tally, readable from across the stage.
       // The labels sit above whichever of the two is taller.
-      const signY=(portalLoaded&&gateOpen)?gy-PORTAL_H-30:gy-gateH-8;
+      const signY=(gateOpen&&portalArtNow())?gy-PORTAL_H-30:gy-gateH-8;
       ctx.textAlign="center";
       ctx.font="bold 10px 'Courier New',monospace";
       ctx.fillStyle="#ffdd66";
@@ -2624,10 +2633,31 @@ function drawCheckpoint(){
 // ─── DRAW THE EVACUATION PORTAL ──────────────────────────────
 // Takes SCREEN coordinates (gx = platform centre - camX, gy = platform top);
 // the caller has already converted, so no camX in here.
+// Resolves which rift art this biome uses: its own sheet if it names one and
+// that sheet has arrived, otherwise the default vortex. Returns null when
+// nothing has loaded, and the procedural arch keeps the screen honest.
+function portalArtNow(){
+  const TH=themeOf();
+  if(TH.portalArt){
+    const a=artFor(TH.portalArt);
+    if(a&&a.loaded){
+      const bb=a.bbox||{x:0,y:0,w:a.img.naturalWidth,h:a.img.naturalHeight};
+      return {img:a.img, bb, spin:!!TH.portalSpin, theme:TH};
+    }
+    return null;   // a biome that names its own art does NOT fall back to the
+                   // volcano vortex — a stone gate and a free vortex are not
+                   // interchangeable, so show the arch until the sheet lands
+  }
+  if(!portalLoaded) return null;
+  return {img:portalSprite, bb:portalBBox, spin:true, theme:TH};
+}
 function drawEvacPortal(gx,gy){
-  if(!portalLoaded||!gateOpen||portalReveal<=0) return;
+  if(!gateOpen||portalReveal<=0) return;
+  const art=portalArtNow();
+  if(!art) return;
   const rev=clamp(portalReveal,0,1);
-  const bb=portalBBox;
+  const bb=art.bb;
+  const bloom=art.theme.portalBloom||["130,225,255","95,60,225"];
   // slow pulse on top of the materialise scale — the rift breathes
   const pulse=1+0.05*Math.sin(t*2.2);
   const h=PORTAL_H*pulse*(0.25+0.75*rev);
@@ -2636,25 +2666,26 @@ function drawEvacPortal(gx,gy){
 
   ctx.save();
   ctx.translate(gx,cy);
-  ctx.rotate(t*0.5);           // spins on its own axis, forever
+  // a free-floating vortex spins; a built gate stands still and only breathes
+  if(art.spin) ctx.rotate(t*0.5);
 
   // additive neon bloom behind the rift
   ctx.save();
   ctx.globalCompositeOperation="lighter";
   const bg=ctx.createRadialGradient(0,0,h*0.10,0,0,h*0.80);
-  bg.addColorStop(0,`rgba(130,225,255,${0.42*rev})`);
-  bg.addColorStop(0.45,`rgba(95,60,225,${0.22*rev})`);
+  bg.addColorStop(0,`rgba(${bloom[0]},${0.42*rev})`);
+  bg.addColorStop(0.45,`rgba(${bloom[1]},${0.22*rev})`);
   bg.addColorStop(1,"rgba(0,0,0,0)");
   ctx.fillStyle=bg;
   ctx.beginPath(); ctx.arc(0,0,h*0.80,0,Math.PI*2); ctx.fill();
   // a blown-up ghost of the sprite so the bloom carries the rift's shape
   ctx.globalAlpha=0.30*rev;
-  ctx.drawImage(portalSprite,bb.x,bb.y,bb.w,bb.h,-w*0.62,-h*0.62,w*1.24,h*1.24);
+  ctx.drawImage(art.img,bb.x,bb.y,bb.w,bb.h,-w*0.62,-h*0.62,w*1.24,h*1.24);
   ctx.restore();
 
   // the rift proper
   ctx.globalAlpha=rev;
-  ctx.drawImage(portalSprite,bb.x,bb.y,bb.w,bb.h,-w/2,-h/2,w,h);
+  ctx.drawImage(art.img,bb.x,bb.y,bb.w,bb.h,-w/2,-h/2,w,h);
   ctx.restore();
 }
 
@@ -4443,6 +4474,10 @@ function update(dt){
   // pendulum owns its position until it lets go
   if(vineGrab){
     if(player.invuln>0) player.invuln-=dt;
+    // Hanging is a rest: the pack refuels while you swing. The early return
+    // below skips the ordinary regen entirely (that only runs on the ground,
+    // and a vine forces onGround false), so it has to happen here.
+    player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*1.6*followerPower().fuelMult*dt);
     updateParticles(dt);
     updateFloatingTexts(dt);
     updateFollowers(dt);
@@ -4602,6 +4637,14 @@ function update(dt){
         if(p.bounce){
           player.vy=BOUNCE_VY;
           onAnyGround=false;
+          // Contact lasts a single frame, so a dt-scaled trickle gives the
+          // player nothing at all. The cap hands over a fixed slug of fuel
+          // instead — that is what makes it worth bouncing off.
+          const fuelBefore=player.jetFuel;
+          player.jetFuel=Math.min(1,player.jetFuel+BOUNCE_FUEL*followerPower().fuelMult);
+          if(player.jetFuel>fuelBefore+0.01){
+            spawnFloatingText(player.x+PLAYER_W/2-camX,p.y-16,"YAKIT+","#a7f3d0",13);
+          }
           screenShake=Math.min(6,screenShake+3);
           playPowerUp();
           spawnParticles(player.x+PLAYER_W/2-camX,p.y,14,["#a7f3d0","#34d399","#ffffff"],
@@ -5142,7 +5185,7 @@ function update(dt){
         x:pp.x-camX+Math.cos(a)*rr, y:pp.y+Math.sin(a)*rr,
         vx:-Math.cos(a)*rnd(70,150), vy:-Math.sin(a)*rnd(70,150),
         life:1, maxLife:rnd(0.5,0.9),
-        color:Math.random()<0.5?"#7dffcf":"#7aa8ff", size:rnd(2,4), type:"square", gravity:0
+        color:Math.random()<0.5?(themeOf().portalMote||"#7dffcf"):"#7aa8ff", size:rnd(2,4), type:"square", gravity:0
       });
     }
     // contact — walking into the rift starts the warp

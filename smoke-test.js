@@ -38,12 +38,12 @@ function check(name,cond,extra){
 }
 
 // ── stub canvas 2d context ────────────────────────────────────
-const drawStats={quad:0, images:[]};
+const drawStats={quad:0, images:[], rotations:[]};
 function makeCtx(){
   const grad={addColorStop(){}};
   const target={
     canvas:{width:900,height:506},
-    save(){},restore(){},translate(){},rotate(){},scale(){},
+    save(){},restore(){},translate(){},rotate(a){ drawStats.rotations.push(a); },scale(){},
     beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},
     quadraticCurveTo(){ drawStats.quad++; },bezierCurveTo(){},rect(){},clip(){},
     fill(){},stroke(){},fillRect(){},strokeRect(){},clearRect(){},
@@ -130,7 +130,8 @@ function run(opts){
   get vineGrab(){return vineGrab;},
   get camY(){return camY;},
   get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
-  get BOUNCE_VY(){return BOUNCE_VY;},
+  get BOUNCE_VY(){return BOUNCE_VY;}, get BOUNCE_FUEL(){return BOUNCE_FUEL;},
+  portalArtNow:()=>portalArtNow(),
   get GRAV(){return GRAV;}, get JUMP_VY(){return JUMP_VY;},
   get MOVE_SPD(){return MOVE_SPD;}, get FALL_GRAV_MULT(){return FALL_GRAV_MULT;},
   vineTip:(v)=>vineTip(v),
@@ -176,6 +177,7 @@ function run(opts){
   worldState:(i)=>worldState(i),
   finishWorld:()=>finishWorld(),
   drawWorldMap:()=>drawWorldMap(),
+  drawEvacPortal:(x,y)=>drawEvacPortal(x,y),
   drawBG:()=>drawBG(),
   isForest:()=>isForest(),
   themeOf:()=>themeOf(),
@@ -1976,6 +1978,108 @@ function runSuite(){
   }
   check('every rung can be arrived at from below',
         stranded.length===0, stranded.join(' ')||'all reachable');
+}
+
+// ── scenario 55: hanging on a vine refuels the pack ──────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const v=g.vines[0];
+  for(let i=0;i<30 && !g.vineGrab;i++){
+    const tip=g.vineTip(v);
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=tip.x-53/2; g.player.y=tip.y-60*0.35;
+    g.player.vy=40; g.player.onGround=false;
+    step(1);
+  }
+  check('hanging on', g.vineGrab===v, !!g.vineGrab);
+  // the pack is nearly dry
+  g.player.jetFuel=0.05;
+  const before=g.player.jetFuel;
+  for(let i=0;i<60;i++){ g.player.invuln=999; step(1); }
+  check('the pack refuels while you swing', g.player.jetFuel>before+0.2,
+        before+' -> '+g.player.jetFuel.toFixed(2));
+  check('...and never past full', g.player.jetFuel<=1.0001, g.player.jetFuel);
+}
+
+// ── scenario 56: a bounce tops the pack up ───────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const cap=g.platforms.filter(p=>p.bounce)[0];
+  g.player.jetFuel=0.05;
+  const before=g.player.jetFuel;
+  g.player.x=cap.x+cap.w/2-26;
+  g.player.y=cap.y-g.PLAYER_H-6;
+  g.player.vy=200;
+  let launched=false;
+  for(let i=0;i<8 && !launched;i++){
+    g.player.invuln=999; step(1);
+    if(g.player.vy<-400) launched=true;
+  }
+  check('the cap launched', launched, g.player.vy.toFixed(0));
+  // a single frame of contact must hand over a real slug, not a dt trickle
+  check('a bounce hands over a slug of fuel',
+        g.player.jetFuel>before+g.BOUNCE_FUEL*0.8,
+        before+' -> '+g.player.jetFuel.toFixed(2)+' (slug '+g.BOUNCE_FUEL+')');
+  check('...and never past full', g.player.jetFuel<=1.0001, g.player.jetFuel);
+}
+
+// ── scenario 57: the canopy has its own rift ─────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(3);
+  check('the volcano uses the default vortex', !g.themeOf().portalArt,
+        String(g.themeOf().portalArt));
+  const vArt=g.portalArtNow();
+  if(FIRE_ONLOAD){
+    check('...and it spins', vArt && vArt.spin===true, vArt&&vArt.spin);
+  }
+
+  g.loadLevel(3);
+  step(3);
+  check('the canopy names its own rift',
+        g.themeOf().portalArt==='forest_portal.png', g.themeOf().portalArt);
+  const fArt=g.portalArtNow();
+  if(FIRE_ONLOAD){
+    check('the canopy rift is loaded', !!fArt, !!fArt);
+    check('a built gate is flagged not to spin', fArt && fArt.spin===false, fArt&&fArt.spin);
+    check('the two biomes draw different art', fArt.img!==vArt.img);
+    // ...and it really does stand still. The flag alone is data; the rotate
+    // call is the behaviour, so watch the transform.
+    g.gateOpen=true;
+    for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+    drawStats.rotations.length=0;
+    g.drawEvacPortal(400,300);
+    const forestSpin=drawStats.rotations.filter(a=>Math.abs(a)>0.001);
+    check('the stone gate is never rotated', forestSpin.length===0,
+          forestSpin.map(a=>a.toFixed(2)).join(','));
+    g.loadLevel(2);
+    for(let i=0;i<10;i++) step(1);
+    g.gateOpen=true;
+    for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+    drawStats.rotations.length=0;
+    g.drawEvacPortal(400,300);
+    const lavaSpin=drawStats.rotations.filter(a=>Math.abs(a)>0.001);
+    check('the free vortex still spins', lavaSpin.length>0,
+          lavaSpin.map(a=>a.toFixed(2)).join(','));
+  } else {
+    // with no sheets at all the arch has to carry the screen
+    check('a missing rift sheet falls back to the arch, not to the wrong one',
+          fArt===null, String(fArt));
+  }
+  g.gateOpen=true;
+  for(let i=0;i<80;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  g.camX=0;
+  g.drawPlatforms();
+  check('the canopy exit renders', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
