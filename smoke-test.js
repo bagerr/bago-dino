@@ -130,6 +130,9 @@ function run(opts){
   get vineGrab(){return vineGrab;},
   get camY(){return camY;},
   get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
+  get BOUNCE_VY(){return BOUNCE_VY;},
+  get GRAV(){return GRAV;}, get JUMP_VY(){return JUMP_VY;},
+  get MOVE_SPD(){return MOVE_SPD;}, get FALL_GRAV_MULT(){return FALL_GRAV_MULT;},
   vineTip:(v)=>vineTip(v),
   drawVines:()=>drawVines(),
   drawPtero:(e)=>drawPtero(e),
@@ -1906,6 +1909,73 @@ function runSuite(){
   check('the shelf drops', shelf.gone===true);
   check('its passenger goes down with it', rider.dying===true||rider.dead===true,
         'dying='+rider.dying+' dead='+rider.dead);
+}
+
+// ── scenario 54: every stage's geometry is reachable ─────────
+{
+  const {g,step}=run({map:true});
+  const GRAV=g.GRAV, MOVE=g.MOVE_SPD, FALL=g.FALL_GRAV_MULT;
+  const riseOf=v=>(v*v)/(2*GRAV);
+  const jumpUp=riseOf(g.JUMP_VY);
+  const bounceUp=riseOf(g.BOUNCE_VY);
+  // how far a level jump carries you: up under gravity, down under the
+  // heavier falling gravity, times the run speed
+  const jumpAcross=(Math.abs(g.JUMP_VY)/GRAV+Math.sqrt(2*jumpUp/(GRAV*FALL)))*MOVE;
+  check('a plain jump clears about a hundred pixels', jumpUp>80 && jumpUp<130,
+        jumpUp.toFixed(0));
+  check('a bounce clears far more than a jump', bounceUp>jumpUp*2,
+        bounceUp.toFixed(0)+' vs '+jumpUp.toFixed(0));
+
+  let caps=0, blind=0, pointless=0, blindWhere='', pointlessWhere='';
+  for(let li=0;li<g.LEVELS.length;li++){
+    const plats=g.LEVELS[li].platforms;
+    for(const c of plats){
+      if(!c.bounce) continue;
+      caps++;
+      const apex=c.y-bounceUp;
+      // 1. clear sky: nothing may hang in the column the bounce rises through,
+      //    or the dino cracks its head on the underside and goes nowhere
+      const bonk=plats.filter(p=>p!==c && p.x<c.x+c.w && p.x+p.w>c.x &&
+                                 p.y<c.y && p.y>apex);
+      if(bonk.length){ blind++; blindWhere+=' L'+li+'@x'+c.x; }
+      // 2. somewhere to land: a ledge inside the arc and within drift reach
+      const land=plats.filter(p=>p!==c && !p.lavaPit && p.y<c.y-40 && p.y>=apex)
+        .filter(p=>Math.max(0,Math.max(c.x-(p.x+p.w),p.x-(c.x+c.w)))<=200);
+      if(!land.length){ pointless++; pointlessWhere+=' L'+li+'@x'+c.x; }
+    }
+  }
+  check('the stages field bouncy caps', caps>0, caps);
+  check('no cap fires into the underside of a shelf', blind===0, blindWhere||'clear');
+  check('every cap has a ledge to land on', pointless===0, pointlessWhere||'ok');
+
+  // the climb's rungs have to be climbable without burning jetpack fuel on
+  // every single one, and any gap wider than a jump must have a vine over it
+  const climb=g.LEVELS[4];
+  const rungs=climb.platforms
+    .filter(p=>p.y<400 && !p.bounce && !p.lavaPit && !p.goal)
+    .sort((a,b)=>b.y-a.y);
+  check('the climb has a real staircase', rungs.length>=5, rungs.length);
+
+  // For each rung, ask whether anything BELOW it could plausibly put you
+  // there: a plain jump from a nearby ledge, a bounce cap whose arc clears
+  // it, or a vine hanging close enough to swing onto it. Walking a y-sorted
+  // list pairwise looked equivalent and was not — a rung moved to the far
+  // side of the map still borrowed a vine from the pair it landed next to.
+  const vines=climb.vines||[];
+  const capList=climb.platforms.filter(p=>p.bounce);
+  const apart=(p,q)=>Math.max(0,Math.max(q.x-(p.x+p.w),p.x-(q.x+q.w)));
+  const stranded=[];
+  for(const hi of rungs){
+    const below=climb.platforms.filter(p=>p!==hi && !p.lavaPit && p.y>hi.y);
+    const byJump=below.some(p=>(p.y-hi.y)<=jumpUp && apart(p,hi)<=jumpAcross);
+    const byBounce=capList.some(c=>c.y>hi.y && c.y-bounceUp<=hi.y && apart(c,hi)<=200);
+    // a swing lands within roughly half the screen of the vine it left
+    const byVine=vines.some(v=>(v.y+(v.len||130))>hi.y &&
+                               Math.abs(v.x-(hi.x+hi.w/2))<=160);
+    if(!byJump&&!byBounce&&!byVine) stranded.push('y'+hi.y+'@x'+hi.x);
+  }
+  check('every rung can be arrived at from below',
+        stranded.length===0, stranded.join(' ')||'all reachable');
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
