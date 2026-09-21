@@ -29,6 +29,12 @@ const ARC_COLOR="#a78bfa";
 // session. Deliberately NOT persisted: a new evening replays the story, the
 // way an arcade cabinet would.
 let arcSeen={};
+// Chests opened THIS run, which is a different question from whether a key
+// has ever been found (hasSeal, which the map glyph reads and which is
+// permanent on purpose). The ending asks this one — reading the permanent
+// seal instead meant that finding all three once made the other two endings
+// unreachable for good.
+let arcOpened={};
 
 // What Command says on arrival, per world. It was one hardcoded line about
 // a volcano erupting, played at the top of every stage in the game —
@@ -66,8 +72,14 @@ function arcFire(key,title,lines,color,opts){
   return true;
 }
 
-// how much of the truth the player is carrying
+// how much of the truth the player is carrying THIS run
 function arcFragments(){
+  let n=0;
+  for(let i=0;i<LEVELS.length;i++) if(LEVELS[i].secretKey && arcOpened[i]) n++;
+  return n;
+}
+// ...and how much has ever been found, which is what the map draws
+function arcFragmentsEver(){
   let n=0;
   for(let i=0;i<LEVELS.length;i++) if(LEVELS[i].secretKey && hasSeal(i)) n++;
   return n;
@@ -111,6 +123,7 @@ function arcBrief(){
 // 2. opening a chest — the only place the other voice speaks
 function arcLog(){
   const id=(WORLDS[worldIndex]||{}).id||"volcano";
+  arcOpened[levelIndex]=true;      // this run has read that record
   const lines=ARC_LOG[id];
   if(!lines) return;
   arcFire("log_"+id,ARC_ARCHIVE,lines,ARC_COLOR,{urgent:true,hold:5.0});

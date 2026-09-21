@@ -121,7 +121,8 @@ function run(opts){
     setTimeout(fn,ms){ return 0; },       // never actually fires
     clearTimeout(){}, setInterval(){return 0;}, clearInterval(){},
     requestAnimationFrame(fn){ rafQueue.push(fn); return rafQueue.length; },
-    localStorage:{ _d:{}, getItem(k){return this._d[k]||null;}, setItem(k,v){this._d[k]=String(v);} },
+    localStorage:{ _d:{}, getItem(k){return this._d[k]||null;}, setItem(k,v){this._d[k]=String(v);},
+                   removeItem(k){ delete this._d[k]; } },
   };
   sandbox.window=sandbox;
   sandbox.globalThis=sandbox;
@@ -316,6 +317,18 @@ function run(opts){
   get ARC_COMMAND(){return ARC_COMMAND;}, get ARC_ARCHIVE(){return ARC_ARCHIVE;},
   arcBrief:()=>arcBrief(), arcLog:()=>arcLog(), arcDebrief:()=>arcDebrief(),
   arcEnding:()=>arcEnding(), arcFragments:()=>arcFragments(),
+  arcFragmentsEver:()=>arcFragmentsEver(),
+  get arcOpened(){return arcOpened;},
+  get resetPrompt(){return resetPrompt;}, set resetPrompt(v){resetPrompt=v;},
+  resetAll:()=>resetAll(), openResetPrompt:()=>openResetPrompt(),
+  closeResetPrompt:()=>closeResetPrompt(), updateReset:(dt)=>updateReset(dt),
+  drawResetPrompt:()=>drawResetPrompt(), drawResetButton:()=>drawResetButton(),
+  mapResetButton:()=>mapResetButton(), resetYesButton:()=>resetYesButton(),
+  resetNoButton:()=>resetNoButton(),
+  get RESET_STORES(){return RESET_STORES;},
+  get worldProgress(){return worldProgress;},
+  get bestGrades(){return bestGrades;},
+  get hiScore(){return hiScore;}, set hiScore(v){hiScore=v;},
   arcFragmentsTotal:()=>arcFragmentsTotal(),
   drawArcEnding:(y)=>drawArcEnding(y),
   get secretKey(){return secretKey;},
@@ -4874,16 +4887,16 @@ function runSuite(){
   const cold=g.arcEnding();
   check('finding nothing ends it coldly', cold.id==='protocol', cold.id);
 
-  // one record: doubt
-  g.secretSeals['stage0_key']=true;
+  // one record: doubt. Opened THIS run, not stamped into the permanent seal
+  g.arcOpened[0]=true;
   const doubt=g.arcEnding();
   check('one record is enough to doubt', doubt.id==='doubt', doubt.id);
   check('...and it reads differently', doubt.title!==cold.title,
         cold.title+' vs '+doubt.title);
 
   // all of them: the way out
-  g.secretSeals['stage3_key']=true;
-  g.secretSeals['stage7_key']=true;
+  g.arcOpened[3]=true;
+  g.arcOpened[7]=true;
   check('all three found', g.arcFragments()===total, g.arcFragments());
   const out=g.arcEnding();
   check('the whole archive changes the ending', out.id==='escape', out.id);
@@ -5087,6 +5100,181 @@ function runSuite(){
   const b=g.arsenalBackButton();
   click(b.x+b.w/2,b.y+b.h/2);
   check('tapping HARİTA leaves', g.STATE==='map', g.STATE);
+}
+
+// ── scenario 135: the seal remembers, the run decides ───────
+{
+  const {g,step}=run({map:true});
+  // everything ever found, and nothing found this run
+  g.secretSeals['stage0_key']=true;
+  g.secretSeals['stage3_key']=true;
+  g.secretSeals['stage7_key']=true;
+  check('the map knows all three have been found',
+        g.arcFragmentsEver()===3, g.arcFragmentsEver());
+  check('...and every glyph lights up',
+        [0,1,2].every(i=>!g.worldHasSecret(i)||g.worldHasSeal(i)),
+        [0,1,2].map(i=>i+':'+g.worldHasSeal(i)).join(' '));
+
+  // ...but this run is carrying nothing, so the ending is the cold one
+  check('this run is carrying nothing', g.arcFragments()===0, g.arcFragments());
+  check('a veteran still gets the cold ending on a fresh run',
+        g.arcEnding().id==='protocol', g.arcEnding().id);
+
+  // find one THIS run and it moves
+  g.arcOpened[0]=true;
+  check('reading a record this run changes it', g.arcEnding().id==='doubt',
+        g.arcEnding().id);
+  check('...without touching what the map knows', g.arcFragmentsEver()===3,
+        g.arcFragmentsEver());
+}
+
+// ── scenario 136: opening a chest records the run ───────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('nothing read yet', g.arcFragments()===0, g.arcFragments());
+
+  const k=g.secretKey;
+  for(let i=0;i<8 && !g.keyHeld();i++){
+    g.player.x=k.x-g.PLAYER_W/2; g.player.y=k.y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999;
+    step(1);
+  }
+  const c=g.secretChest;
+  for(let i=0;i<20 && !g.secretChest.open;i++){
+    g.player.x=c.x; g.player.y=c.y-g.PLAYER_H+20;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('the chest was opened', g.secretChest.open===true);
+  check('the run recorded it', g.arcFragments()===1, g.arcFragments());
+  check('...and so did the permanent seal', g.arcFragmentsEver()===1,
+        g.arcFragmentsEver());
+}
+
+// ── scenario 137: a new game asks first ─────────────────────
+{
+  const {g,step,keys,store}=run({map:true});
+  // give it something to lose
+  g.runCoins=500; g.bankStageClear('A');
+  const rec=g.makeHatchling('baby'); g.enrolHatchling(rec,'S');
+  g.secretSeals['stage0_key']=true; g.hiScore=12345;
+  g.addMastery('spread',999);
+  check('there is progress to lose', g.bank.coins>0 && g.roster.members.length>0,
+        g.bank.coins+' / '+g.roster.members.length);
+  check('...and it is on disk', !!store.getItem('neonDinoBank'));
+
+  check('no prompt to start with', g.resetPrompt===false);
+  // the key is gated on stateTimer, so that the ENTER which just opened the
+  // map cannot trip something on the same frame — let a few frames pass
+  step(20);
+  keys({KeyN:true}); g.updateReset(0.016); keys({KeyN:false});
+  check('N raises the prompt', g.resetPrompt===true);
+  g.drawResetPrompt();
+  check('the prompt renders', true);
+  check('...and nothing is gone yet', g.bank.coins>0, g.bank.coins);
+
+  // backing out leaves everything alone
+  keys({Escape:true}); g.updateReset(0.016); keys({Escape:false});
+  check('escape backs out', g.resetPrompt===false);
+  check('...with the money still there', g.bank.coins>0, g.bank.coins);
+
+  // the prompt swallows ENTER, so a world cannot be started behind it
+  g.openResetPrompt();
+  check('the prompt owns the input', g.updateReset(0.016)===true);
+  g.closeResetPrompt();
+  check('and gives it back', g.updateReset(0.016)===false);
+}
+
+// ── scenario 138: and then it really wipes ──────────────────
+{
+  const {g,step,store}=run({map:true});
+  g.runCoins=800; g.bankStageClear('A');
+  g.buyUpgrade('hearts');
+  const rec=g.makeHatchling('baby'); g.enrolHatchling(rec,'S');
+  g.loseHatchling(g.makeHatchling('baby'));
+  g.secretSeals['stage0_key']=true; g.saveSeals ? g.saveSeals() : null;
+  g.addMastery('spread',999);
+  g.setLoadout('spread');
+  g.hiScore=4242;
+  g.arcOpened[0]=true;
+  g.arcSeen['brief_volcano']=true;
+  // and actually clear a world, or there is no map progress to wipe and the
+  // 'locked down again' check passes because it was never unlocked
+  g.startWorld(0); g.finishWorld();
+  check('a world was cleared', Object.keys(g.worldProgress).length>0,
+        JSON.stringify(g.worldProgress));
+
+  const before=g.RESET_STORES.filter(k=>store.getItem(k)!==null);
+  check('several stores are written', before.length>=3, before.join(','));
+
+  g.resetAll();
+
+  check('the bank is empty', g.bank.coins===0 && g.roster.delivered===0,
+        g.bank.coins);
+  check('the upgrades are gone', g.upgradeLevel('hearts')===0, g.upgradeLevel('hearts'));
+  check('the brood is gone', g.roster.members.length===0 && g.roster.lost===0,
+        g.roster.members.length+'/'+g.roster.lost);
+  check('the seals are gone', g.arcFragmentsEver()===0, g.arcFragmentsEver());
+  check('the mastery is gone', g.masteryLevel('spread')===0, g.masteryLevel('spread'));
+  check('...and the loadout is back on the beam', g.arsenal.loadout==='beam',
+        g.arsenal.loadout);
+  check('the record is gone', g.hiScore===0, g.hiScore);
+  check('the story is rewound', Object.keys(g.arcSeen).length===0 &&
+        g.arcFragments()===0, Object.keys(g.arcSeen).join(','));
+  check('the map is locked down again',
+        Object.keys(g.worldProgress).length===0, JSON.stringify(g.worldProgress));
+  check('the prompt closed itself', g.resetPrompt===false);
+
+  // the stores, not just the objects in memory
+  const left=g.RESET_STORES.filter(k=>{
+    const v=store.getItem(k);
+    return v!==null && v!=='' && v!=='{}' && v!=='0';
+  });
+  check('every store is cleared on disk', left.length===0, left.join(','));
+
+  // and the game still runs afterwards
+  check('the volcano is playable again', g.worldState(0).playable===true);
+  g.startWorld(0);
+  step(5);
+  check('a fresh campaign starts', g.STATE==='playing', g.STATE);
+  check('...on the base weapon', g.weapon==='beam', g.weapon);
+  check('...with the stock heart count', g.player.maxHp===g.BASE_HEARTS,
+        g.player.maxHp);
+}
+
+// ── scenario 139: wiping by thumb ───────────────────────────
+{
+  const {g,step,click}=run({map:true});
+  g.touchMode=true;
+  g.runCoins=400; g.bankStageClear('A');
+  check('there is money', g.bank.coins>0, g.bank.coins);
+
+  const b=g.mapResetButton();
+  click(b.x+b.w/2,b.y+b.h/2);
+  check('tapping YENİ OYUN raises the prompt', g.resetPrompt===true);
+  check('...and takes nothing yet', g.bank.coins>0, g.bank.coins);
+
+  // a tap anywhere else while the prompt is up must not start a world
+  click(g.WORLDS[0].mx*900,g.WORLDS[0].my*506);
+  check('the prompt swallows a tap on a map node', g.STATE==='map', g.STATE);
+  check('...and stays up', g.resetPrompt===true);
+
+  const no=g.resetNoButton();
+  click(no.x+no.w/2,no.y+no.h/2);
+  check('VAZGEÇ backs out', g.resetPrompt===false);
+  check('...with everything intact', g.bank.coins>0, g.bank.coins);
+
+  click(b.x+b.w/2,b.y+b.h/2);
+  const yes=g.resetYesButton();
+  click(yes.x+yes.w/2,yes.y+yes.h/2);
+  check('SİL goes through with it', g.bank.coins===0, g.bank.coins);
+  check('...and closes', g.resetPrompt===false);
+  g.drawWorldMap();
+  check('the map renders after a wipe', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

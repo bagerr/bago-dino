@@ -721,6 +721,8 @@ function drawWorldMap(){
   ctx.fillStyle='#66708c';
   ctx.fillText(touchMode?'DOKUN':'C',ab.x+ab.w/2,ab.y+30);
 
+  drawResetButton();
+
   ctx.textAlign="center";
   ctx.font="bold 10px 'Courier New',monospace";
   ctx.fillStyle="#66708c";

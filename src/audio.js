@@ -62,6 +62,7 @@ window.addEventListener("pointerdown", ev=>{
   }
   // the map: tap a destination
   if(STATE==="map"){
+    if(resetTapAt(p)) return;      // the wipe prompt gets first refusal
     if(mapStampTimer>0) return;
     const hb=mapHangarButton();
     if(p.x>=hb.x&&p.x<=hb.x+hb.w&&p.y>=hb.y&&p.y<=hb.y+hb.h){ openHangar(); return; }
