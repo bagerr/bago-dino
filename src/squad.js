@@ -107,6 +107,7 @@ function panicFollower(idx){
     vx:-player.facing*rnd(40,110)+rnd(-40,40), vy:-240,
     timer:PANIC_SECONDS, catchLock:CATCH_LOCK, bob:rnd(0,Math.PI*2), facing:f.facing
   });
+  if(f.rec) f.rec.panicked=true;
   playBabyPanic();
   screenShake=Math.min(6,screenShake+3);
   hitStopTimer=Math.max(hitStopTimer,0.04);
@@ -125,6 +126,7 @@ function recaptureBaby(b){
   }
   followers.push({x:b.x,y:b.y,bob:rnd(0,Math.PI*2),facing:player.facing,
                   grace:REJOIN_GRACE,species:b.species||"baby",rec:b.rec||null});
+  if(b.rec) b.rec.recaptured=true;
   playChime(chain);
   spawnFloatingText(b.x-camX,b.y-20,"YAKALANDI!","#8effc9",14);
   spawnParticles(b.x-camX,b.y,12,["#8effc9","#ffdd88","#ffffff"],

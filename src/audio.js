@@ -45,7 +45,11 @@ window.addEventListener("pointerdown", ev=>{
   // the brood roster: the only thing to tap is the way out
   if(STATE==="brood"){
     const b=broodBackButton();
-    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h) closeBrood();
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){ closeBrood(); return; }
+    for(let i=0;i<2;i++){
+      const tb=broodTabButton(i);
+      if(p.x>=tb.x&&p.x<=tb.x+tb.w&&p.y>=tb.y&&p.y<=tb.y+tb.h){ setBroodTab(i); return; }
+    }
     return;
   }
   // the hangar: tap a row to buy it, or the button to leave

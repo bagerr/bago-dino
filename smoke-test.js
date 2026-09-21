@@ -295,6 +295,15 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  deedForDelivered:(r)=>deedForDelivered(r),
+  deedForLost:(r)=>deedForLost(r),
+  recordDeed:(r)=>recordDeed(r), recordFallen:(r)=>recordFallen(r),
+  wrapText:(t,w,f)=>wrapText(t,w,f),
+  get FALLEN_KEPT(){return FALLEN_KEPT;},
+  get broodTab(){return broodTab;}, setBroodTab:(i)=>setBroodTab(i),
+  broodPages:()=>broodPages(), broodTabButton:(i)=>broodTabButton(i),
+  get hitsThisLevel(){return hitsThisLevel;}, set hitsThisLevel(v){hitsThisLevel=v;},
+  get lastLostName(){return lastLostName;}, set lastLostName(v){lastLostName=v;},
   get arsenal(){return arsenal;},
   get MASTERY_STEPS(){return MASTERY_STEPS;},
   get LOADOUT_AMMO_FRAC(){return LOADOUT_AMMO_FRAC;},
@@ -5275,6 +5284,211 @@ function runSuite(){
   check('...and closes', g.resetPrompt===false);
   g.drawWorldMap();
   check('the map renders after a wipe', true);
+}
+
+// ── scenario 140: every arrival carries its own sentence ────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  const rec=g.makeHatchling('baby');
+  g.enrolHatchling(rec,'A');
+  const m=g.roster.members[0];
+  check('an arrival is written down', !!m, g.roster.members.length);
+  check('...with a sentence of its own', typeof m.deed==='string' && m.deed.length>0,
+        m.deed);
+  check('...and where it happened', typeof m.where==='string' && m.where.length>0,
+        m.where);
+  check('the place is a real stage', m.where===g.LEVELS[0].name,
+        m.where+' vs '+g.LEVELS[0].name);
+}
+
+// ── scenario 141: the sentence is TRUE, not decoration ──────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.lastLostName=''; g.hitsThisLevel=3;
+  g.fogY=Infinity; g.windState='calm';
+  const fresh=()=>g.makeHatchling('baby');
+
+  // the priority order is the whole design: the most dramatic TRUE thing
+  // wins, and a fact that is not true must never be claimed
+  g.player.hp=1;
+  check('one heart left is what gets said',
+        g.deedForDelivered(fresh()).indexOf('Son kalbinle')>=0,
+        g.deedForDelivered(fresh()));
+
+  g.player.hp=99;
+  const panicky=fresh(); panicky.panicked=true;
+  check('a hatchling that bolted is remembered for it',
+        g.deedForDelivered(panicky).indexOf('Panikledi')>=0,
+        g.deedForDelivered(panicky));
+
+  const calm=fresh();
+  check('...and one that never bolted is not',
+        g.deedForDelivered(calm).indexOf('Panikledi')<0,
+        g.deedForDelivered(calm));
+
+  g.lastLostName='ÇAKIL';
+  check('somebody else being lost outranks the quiet lines',
+        g.deedForDelivered(fresh()).indexOf('ÇAKIL')>=0,
+        g.deedForDelivered(fresh()));
+  g.lastLostName='';
+
+  // untouched runs say so, and only when true
+  g.hitsThisLevel=0; g.rescuedThisLevel=0;
+  check('a clean run is remembered as one',
+        g.deedForDelivered(fresh()).indexOf('Tek çizik')>=0,
+        g.deedForDelivered(fresh()));
+  g.hitsThisLevel=4;
+  check('...and a bloody one is not',
+        g.deedForDelivered(fresh()).indexOf('Tek çizik')<0,
+        g.deedForDelivered(fresh()));
+
+  // there is always something to say
+  check('a quiet rescue still gets a sentence',
+        g.deedForDelivered(fresh()).length>0, g.deedForDelivered(fresh()));
+}
+
+// ── scenario 142: the weather gets into it ──────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);              // ROTWOOD RISE: the rot rises here
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.lastLostName=''; g.hitsThisLevel=2;
+
+  g.fogY=Infinity;
+  const dry=g.deedForDelivered(g.makeHatchling('baby'));
+  check('no rot, no mention of rot', dry.indexOf('Çürüme')<0, dry);
+
+  g.fogY=g.player.y+40;        // right at the dino's heels
+  const wet=g.deedForDelivered(g.makeHatchling('baby'));
+  check('the rot at your heels is what gets said',
+        wet.indexOf('Çürüme')>=0, wet);
+  check('...and it is a different sentence', wet!==dry, dry+' / '+wet);
+}
+
+// ── scenario 143: the ones who did not arrive ───────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the memorial starts empty', (g.roster.fallen||[]).length===0);
+
+  g.breakCage(g.cages[0]);
+  const f=g.followers[0];
+  const name=f.rec.name;
+  g.panicFollower(0);
+  check('it carries the panic on its record', g.scaredBabies[0].rec.panicked===true);
+  g.fogY=g.player.y+40;
+  g.loseBaby(g.scaredBabies[0],false);
+
+  const fallen=g.roster.fallen[0];
+  check('the lost one has a page', !!fallen, (g.roster.fallen||[]).length);
+  check('...with its name', fallen.name===name, fallen.name+' vs '+name);
+  check('...where it happened', fallen.where===g.LEVELS[5].name, fallen.where);
+  check('...and what happened', typeof fallen.deed==='string' && fallen.deed.length>0,
+        fallen.deed);
+  check('the rot took it, and the page says so',
+        fallen.deed.indexOf('Çürüme')>=0, fallen.deed);
+  check('it never joined the living', g.roster.members.length===0,
+        g.roster.members.length);
+
+  // the memorial is long, not infinite
+  for(let i=0;i<g.FALLEN_KEPT+15;i++) g.recordFallen(g.makeHatchling('baby'));
+  check('the memorial has a limit', g.roster.fallen.length===g.FALLEN_KEPT,
+        g.roster.fallen.length);
+  check('...and it keeps the most recent', g.roster.fallen[0].name!==name,
+        g.roster.fallen[0].name);
+}
+
+// ── scenario 144: the book, and its two tabs ────────────────
+{
+  const {g,step,keys,click}=run({map:true});
+  g.openBrood();
+  check('it opens on the living', g.broodTab===0, g.broodTab);
+  check('...which is empty to start', g.broodPages().length===0);
+  g.drawBrood();
+  check('an empty book renders', true);
+
+  // fill both sides
+  for(let i=0;i<9;i++){
+    const r=g.makeHatchling('baby');
+    g.enrolHatchling(r,'B');
+  }
+  for(let i=0;i<5;i++) g.recordFallen(g.makeHatchling('baby'));
+  check('the living page has the living', g.broodPages().length===9,
+        g.broodPages().length);
+  g.drawBrood();
+  check('a full page renders', true);
+
+  g.setBroodTab(1);
+  check('the second tab is the fallen', g.broodTab===1, g.broodTab);
+  check('...and shows them', g.broodPages().length===5, g.broodPages().length);
+  check('...which is a different list', g.broodPages()!==g.roster.members);
+  g.drawBrood();
+  check('the memorial renders', true);
+
+  // arrows switch tabs
+  keys({ArrowLeft:true}); g.updateBrood(0.016); keys({ArrowLeft:false}); g.updateBrood(0.016);
+  check('left goes back to the living', g.broodTab===0, g.broodTab);
+  keys({ArrowRight:true}); g.updateBrood(0.016); keys({ArrowRight:false}); g.updateBrood(0.016);
+  check('right goes to the fallen', g.broodTab===1, g.broodTab);
+
+  // switching resets the scroll, or page two of a short list shows nothing
+  keys({ArrowDown:true}); g.updateBrood(0.5); keys({ArrowDown:false});
+  g.setBroodTab(0);
+  check('switching tabs rewinds the scroll', true);
+
+  // and a thumb can do it
+  g.touchMode=true;
+  const tb=g.broodTabButton(1);
+  click(tb.x+tb.w/2,tb.y+tb.h/2);
+  check('tapping a tab switches it', g.broodTab===1, g.broodTab);
+  const back=g.broodBackButton();
+  click(back.x+back.w/2,back.y+back.h/2);
+  check('the way out still works', g.STATE==='map', g.STATE);
+}
+
+// ── scenario 145: a generated line has to be wrapped ────────
+{
+  const {g}=run({map:true});
+  const short=g.wrapText("Kısa.",300,"11px 'Courier New',monospace");
+  check('a short line stays one line', short.length===1, short.join('|'));
+
+  const long=g.wrapText(
+    "Çürüme suyu yükselirken kopmuştu ve sen onu bir daha göremedin.",
+    200,"11px 'Courier New',monospace");
+  check('a long one is broken up', long.length>1, long.length);
+  check('...without losing any words',
+        long.join(' ').split(' ').length===
+        "Çürüme suyu yükselirken kopmuştu ve sen onu bir daha göremedin.".split(' ').length,
+        long.join(' '));
+  check('...and nothing is empty', long.every(l=>l.length>0), long.join('|'));
+
+  // every sentence the game can generate has to fit a card
+  const {g:g2,step}=run({map:true});
+  g2.startWorld(0); step(2);
+  const seen=[];
+  for(const hp of [1,99]) for(const panic of [true,false]){
+    g2.player.hp=hp;
+    const r=g2.makeHatchling('baby'); r.panicked=panic;
+    seen.push(g2.deedForDelivered(r), g2.deedForLost(r));
+  }
+  const tooWide=seen.filter(d=>
+    g2.wrapText(d,366,"11px 'Courier New',monospace").length>2);
+  check('every sentence fits two lines on a card', tooWide.length===0,
+        tooWide.join(' / '));
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

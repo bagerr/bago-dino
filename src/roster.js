@@ -43,7 +43,7 @@ const RANKS=["","ÇAYLAK","USTA","KIDEMLİ"];
 const GRADE_RANK={S:3, A:3, B:2, C:1, D:1};
 function rankForGrade(letter){ return GRADE_RANK[letter]||1; }
 
-let roster={members:[], lost:0, delivered:0, nextId:1};
+let roster={members:[], lost:0, delivered:0, nextId:1, fallen:[]};
 try{
   const raw=localStorage.getItem("neonDinoRoster");
   if(raw){
@@ -53,6 +53,7 @@ try{
       roster.lost=Math.max(0,Math.floor(Number(p.lost)||0));
       roster.delivered=Math.max(0,Math.floor(Number(p.delivered)||0));
       roster.nextId=Math.max(1,Math.floor(Number(p.nextId)||1));
+      roster.fallen=Array.isArray(p.fallen)?p.fallen.filter(f=>f&&f.name):[];
     }
   }
 }catch(e){ /* a blocked or corrupt store just means an empty brood */ }
@@ -91,8 +92,11 @@ function enrolHatchling(rec,letter){
   if(!rec||rec.home) return null;
   rec.rank=rankForGrade(letter);
   rec.home=true;
+  // the sentence of its own rescue, read off what actually happened
+  recordDeed(rec);
   roster.members.push({id:rec.id,name:rec.name,role:rec.role,
-                       species:rec.species,rank:rec.rank});
+                       species:rec.species,rank:rec.rank,
+                       deed:rec.deed,where:rec.where});
   roster.delivered++;
   saveRoster();
   return rec;
@@ -101,6 +105,8 @@ function enrolHatchling(rec,letter){
 function loseHatchling(rec){
   if(!rec) return;
   roster.lost++;
+  // a counter going up is arithmetic. The memorial is the story.
+  recordFallen(rec);
   saveRoster();
 }
 
@@ -126,21 +132,33 @@ function broodTier(roleId){
 // the trophy cabinet, and the reason a panicking hatchling is worth turning
 // around for.
 let broodScroll=0;
-function openBrood(){ STATE="brood"; stateTimer=0; broodScroll=0; }
+let broodTab=0;                 // 0 = the living, 1 = the fallen
+function openBrood(){ STATE="brood"; stateTimer=0; broodScroll=0; broodTab=0; }
+function broodPages(){ return broodTab===0?roster.members:(roster.fallen||[]); }
+function broodTabButton(i){ return {x:40+i*130, y:H-52, w:120, h:32}; }
 function closeBrood(){ STATE="map"; stateTimer=0; }
 function broodBackButton(){ return {x:W-132, y:H-52, w:110, h:34}; }
 function mapBroodButton(){ return {x:W-150, y:H-102, w:128, h:36}; }
 
+let broodTabKeyWasDown=false;
+function setBroodTab(i){
+  if(i===broodTab) return;
+  broodTab=i; broodScroll=0;
+  playPew();
+}
 function updateBrood(dt){
   stateTimer+=dt;
   updateParticles(dt);
-  const rows=Math.max(0,roster.members.length-BROOD_ROWS*BROOD_COLS);
+  const rows=Math.max(0,broodPages().length-BROOD_ROWS*BROOD_COLS);
   if(K["ArrowDown"]||K["KeyS"]) broodScroll=Math.min(rows,broodScroll+dt*6);
   if(K["ArrowUp"]||K["KeyW"])   broodScroll=Math.max(0,broodScroll-dt*6);
+  const lr=(K["ArrowLeft"]||K["KeyA"])?0:((K["ArrowRight"]||K["KeyD"])?1:-1);
+  if(lr>=0&&!broodTabKeyWasDown) setBroodTab(lr);
+  broodTabKeyWasDown=lr>=0;
   if(K["Escape"]||K["Backspace"]){ K["Escape"]=false; K["Backspace"]=false; closeBrood(); }
 }
 
-const BROOD_COLS=3, BROOD_ROWS=6, BROOD_CARD_W=252, BROOD_CARD_H=46;
+const BROOD_COLS=2, BROOD_ROWS=4, BROOD_CARD_W=390, BROOD_CARD_H=72;
 function drawBrood(){
   const g=ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0,"#04080c"); g.addColorStop(0.6,"#0a1418"); g.addColorStop(1,"#0d1016");
@@ -186,36 +204,69 @@ function drawBrood(){
     rx+=150;
   }
 
-  if(!roster.members.length){
+  const page=broodPages();
+  const fallenTab=broodTab===1;
+  if(!page.length){
     ctx.textAlign="center";
     ctx.font="bold 14px 'Courier New',monospace";
     ctx.fillStyle="#5b7078";
-    ctx.fillText("Henüz kimse üsse varmadı.",W/2,H/2);
+    ctx.fillText(fallenTab?"Kimse geride kalmadı."
+                          :"Henüz kimse üsse varmadı.",W/2,H/2);
     ctx.font="12px 'Courier New',monospace";
-    ctx.fillText("Bir kafes kır ve yavruyu yarığa kadar götür.",W/2,H/2+22);
+    ctx.fillText(fallenTab?"Böyle kalsın."
+                          :"Bir kafes kır ve yavruyu yarığa kadar götür.",W/2,H/2+22);
     ctx.textAlign="left";
   } else {
-    const top=132, skip=Math.floor(broodScroll)*BROOD_COLS;
+    const top=126, skip=Math.floor(broodScroll)*BROOD_COLS;
     for(let i=0;i<BROOD_ROWS*BROOD_COLS;i++){
-      const m=roster.members[skip+i];
+      const m=page[skip+i];
       if(!m) break;
-      const cx=40+(i%BROOD_COLS)*(BROOD_CARD_W+12);
-      const cy=top+Math.floor(i/BROOD_COLS)*(BROOD_CARD_H+6);
-      ctx.fillStyle="rgba(255,255,255,0.04)";
+      const cx=40+(i%BROOD_COLS)*(BROOD_CARD_W+18);
+      const cy=top+Math.floor(i/BROOD_COLS)*(BROOD_CARD_H+8);
+      ctx.fillStyle=fallenTab?"rgba(255,85,119,0.05)":"rgba(255,255,255,0.04)";
       ctx.fillRect(cx,cy,BROOD_CARD_W,BROOD_CARD_H);
-      ctx.fillStyle=roleColor(m.role);
+      ctx.fillStyle=fallenTab?"#ff5577":roleColor(m.role);
       ctx.fillRect(cx,cy,3,BROOD_CARD_H);
+
       ctx.font="bold 14px 'Courier New',monospace";
-      ctx.fillStyle="#e6f6ee";
-      ctx.fillText(m.name,cx+12,cy+20);
-      ctx.font="bold 10px 'Courier New',monospace";
-      ctx.fillStyle=roleColor(m.role);
-      ctx.fillText(roleName(m.role)+" · "+rankName(m.rank),cx+12,cy+36);
+      ctx.fillStyle=fallenTab?"#ffc2ce":"#e6f6ee";
+      ctx.fillText(m.name,cx+12,cy+19);
+      ctx.font="bold 9px 'Courier New',monospace";
+      ctx.fillStyle=fallenTab?"#a8707f":roleColor(m.role);
+      ctx.fillText(fallenTab?roleName(m.role)
+                            :(roleName(m.role)+" · "+rankName(m.rank)),cx+12,cy+32);
       ctx.textAlign="right";
       ctx.fillStyle="#5b7078";
-      ctx.fillText("#"+m.id,cx+BROOD_CARD_W-10,cy+36);
+      ctx.fillText(m.where||"",cx+BROOD_CARD_W-10,cy+19);
       ctx.textAlign="left";
+
+      // the sentence: wrapped, because it is generated rather than
+      // hand-written to a width the way the radio's lines are
+      if(m.deed){
+        const lines=wrapText(m.deed,BROOD_CARD_W-24,"11px 'Courier New',monospace");
+        ctx.fillStyle=fallenTab?"#c99aa6":"#9fd8bd";
+        for(let k=0;k<Math.min(2,lines.length);k++)
+          ctx.fillText(lines[k],cx+12,cy+48+k*13);
+      }
     }
+  }
+
+  // the two tabs
+  for(let i=0;i<2;i++){
+    const tb=broodTabButton(i);
+    const on=broodTab===i;
+    ctx.fillStyle=on?(i?"rgba(255,85,119,0.16)":"rgba(142,255,201,0.14)")
+                    :"rgba(255,255,255,0.04)";
+    ctx.fillRect(tb.x,tb.y,tb.w,tb.h);
+    ctx.strokeStyle=on?(i?"#ff5577":"#8effc9"):"#3a4a52"; ctx.lineWidth=on?2:1;
+    ctx.strokeRect(tb.x+0.5,tb.y+0.5,tb.w-1,tb.h-1);
+    ctx.textAlign="center";
+    ctx.font="bold 11px 'Courier New',monospace";
+    ctx.fillStyle=on?(i?"#ffc2ce":"#dfffe9"):"#6b8088";
+    ctx.fillText((i?"KAYIP ":"SOY ")+(i?(roster.fallen||[]).length
+                                        :roster.members.length),
+                 tb.x+tb.w/2,tb.y+20);
+    ctx.textAlign="left";
   }
 
   const b=broodBackButton();
@@ -229,6 +280,7 @@ function drawBrood(){
   ctx.fillText("HARİTA",b.x+b.w/2,b.y+22);
   ctx.font="bold 10px 'Courier New',monospace";
   ctx.fillStyle="#4e6169";
-  ctx.fillText(touchMode?"HARİTA'YA DOKUN":"↑↓ KAYDIR    ESC: HARİTA",W/2,H-14);
+  ctx.fillText(touchMode?"SEKMEYE DOKUN":"←→ SEKME    ↑↓ KAYDIR    ESC: HARİTA",
+               W/2,H-14);
   ctx.textAlign="left";
 }
