@@ -71,6 +71,7 @@ const LEVELS = [
       {x:180, y:340,w:120,h:18},
       {x:480, y:320,w:110,h:18},
       {x:640, y:260,w:120,h:18},
+      {x:690, y:120,w:80, h:14},   // the secret perch, above everything
       {x:900, y:300,w:120,h:18},
       {x:1120,y:350,w:140,h:18,goal:true},
     ],
@@ -94,6 +95,7 @@ const LEVELS = [
     // three captives per stage — the debrief tallies X / 3
     cages:[{x:240,y:318},{x:640,y:238},{x:960,y:278}],
     escapeLine:"EMBER PATH TAHLİYE EDİLDİ",
+    secretKey:{x:730,y:120},
     checkpoint:620, parTime:60,
     arena:null,
     boss:{x:1050,triggerX:900,hp:7,kind:"flyer",w:130,h:82,
@@ -213,6 +215,7 @@ const LEVELS = [
       {x:170, y:330,w:120,h:18},
       {x:470, y:300,w:120,h:18},
       {x:660, y:250,w:130,h:18},
+      {x:700, y:110,w:80, h:14},   // the secret perch
       {x:930, y:290,w:120,h:18},
       {x:1180,y:340,w:150,h:18,goal:true},
     ],
@@ -243,6 +246,7 @@ const LEVELS = [
     // one hostage in this stage, and it is a triceratops
     cages:[{x:700,y:228,species:"trike"}],
     escapeLine:"ZEHİRLİ ÇATIDAN ÇIKILDI",
+    secretKey:{x:740,y:110},
     checkpoint:700, parTime:70,
     arena:null,
     boss:null,
@@ -431,6 +435,7 @@ const LEVELS = [
       {x:150, y:348,w:130,h:18},
       {x:440, y:300,w:140,h:18},
       {x:700, y:252,w:140,h:18},
+      {x:860, y:112,w:80, h:14},   // the secret perch, clear of the icicles
       {x:960, y:300,w:140,h:18},
       {x:1190,y:252,w:130,h:18},
       {x:1350,y:346,w:150,h:18,goal:true},
@@ -462,6 +467,7 @@ const LEVELS = [
              {x:1000,y:258,kind:"flame"}],
     cages:[{x:1250,y:226,species:"frozen"}],
     escapeLine:"TİPİNİN İÇİNDEN GEÇİLDİ",
+    secretKey:{x:900,y:112},
     checkpoint:960, parTime:105,
     arena:null,
     boss:null,

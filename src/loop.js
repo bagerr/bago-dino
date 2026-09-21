@@ -38,6 +38,8 @@ function loop(now){
   drawGlaze();
   drawIcicles();
   drawFog();
+  drawSecretChest();
+  drawSecretKey();
   drawCheckpoint();
   drawCrystals();
   drawPowerUpBoxes();
@@ -69,6 +71,7 @@ function loop(now){
   drawFeverOverlay();   // full-screen, so outside the world transform
 
   drawHUD();
+  drawKeyNotice();
   drawTouchPad();
   drawArenaBanners();
   drawBossCard();

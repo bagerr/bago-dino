@@ -292,6 +292,19 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  get secretKey(){return secretKey;},
+  get secretChest(){return secretChest;},
+  get secretSeals(){return secretSeals;},
+  get keyNoticeTimer(){return keyNoticeTimer;},
+  get SECRET_SCORE(){return SECRET_SCORE;},
+  keyHeld:()=>keyHeld(),
+  hasSeal:(i)=>hasSeal(i),
+  worldHasSeal:(i)=>worldHasSeal(i),
+  worldHasSecret:(i)=>worldHasSecret(i),
+  drawSecretKey:()=>drawSecretKey(),
+  drawSecretChest:()=>drawSecretChest(),
+  drawKeyNotice:()=>drawKeyNotice(),
+  get score(){return score;}, set score(v){score=v;},
   get THEMES(){return THEMES;},
   themeOf:()=>themeOf(),
   drawBiomeBG:()=>drawBiomeBG(),
@@ -4306,15 +4319,18 @@ function runSuite(){
     drawStats.quad=0;
     g.drawBiomeBG();
     const srcs=drawStats.images.map(im=>String(im.src||''));
+    // resolve through assetURL: a filename in the folder build, a data: URI
+    // in the bundle, and the comparison works in both
+    const url=(n)=>String(g.assetURL(n));
     if(artLoads){
       check('stage '+li+' draws '+want,
-            srcs.some(sname=>sname.indexOf(want)>=0),
-            srcs.join(',')||'(nothing drawn)');
+            srcs.some(sname=>sname===url(want)),
+            srcs.map(x=>x.slice(0,42)).join(',')||'(nothing drawn)');
       // and only its own: a biome borrowing another's sky is the bug here
       const others=['volcano_bg.png','forest_bg.png','ice_bg.png'].filter(o=>o!==want);
       check('...and none of the others',
-            !srcs.some(sname=>others.some(o=>sname.indexOf(o)>=0)),
-            srcs.join(','));
+            !srcs.some(sname=>others.some(o=>sname===url(o))),
+            srcs.map(x=>x.slice(0,42)).join(','));
     } else {
       check('stage '+li+' blits no backdrop when the sheet never arrives',
             srcs.length===0, srcs.join(','));
@@ -4340,7 +4356,8 @@ function runSuite(){
     g.camX=cx;
     drawStats.images.length=0;
     g.drawBiomeBG();
-    const tiles=drawStats.images.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0);
+    const vurl=String(g.assetURL('volcano_bg.png'));
+    const tiles=drawStats.images.filter(im=>String(im.src||'')===vurl);
     if(!tiles.length) return null;
     // sort by destination x and look for a hole between consecutive tiles
     const spans=tiles.map(im=>[Math.min(im.dx,im.dx+im.dw),Math.max(im.dx,im.dx+im.dw)])
@@ -4360,8 +4377,9 @@ function runSuite(){
 
     // and it really is scrolling: the same tile lands somewhere else
     g.camX=0;  drawStats.images.length=0; g.drawBiomeBG();
+    const vu=String(g.assetURL('volcano_bg.png'));
     const lead=(arr)=>{
-      const t=arr.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0)
+      const t=arr.filter(im=>String(im.src||'')===vu)
                  .map(im=>Math.min(im.dx,im.dx+im.dw)).sort((p,q)=>p-q);
       return t.length?t[0]:null;
     };
@@ -4377,7 +4395,7 @@ function runSuite(){
     // The strip repeats every tile width, so its position is only meaningful
     // MODULO one tile: a shift of one whole tile is the same picture. Measure
     // the circular distance, which is what the eye actually sees move.
-    const tileW=Math.abs((drawStats.images.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0)[0]||{}).dw||0);
+    const tileW=Math.abs((drawStats.images.filter(im=>String(im.src||'')===vu)[0]||{}).dw||0);
     let shift=null;
     if(a.dx!==null && b.dx!==null && tileW>0){
       const d=Math.abs(b.dx-a.dx)%tileW;
@@ -4419,6 +4437,199 @@ function runSuite(){
   for(let i=0;i<600;i++) g.drawAtmosphere({});
   check('a biome with no atmosphere gets none', g.particles.length===0,
         g.particles.length);
+}
+
+// ── scenario 115: a key on a perch, off the route ───────────
+{
+  const {g,step}=run({map:true});
+  const withKey=g.LEVELS.map((L,i)=>L.secretKey?i:-1).filter(i=>i>=0);
+  check('three stages hide a key', withKey.length===3, withKey.join(','));
+  check('...one per biome',
+        new Set(withKey.map(i=>g.LEVELS[i].theme)).size===3,
+        withKey.map(i=>g.LEVELS[i].theme).join(','));
+
+  for(const li of withKey){
+    const L=g.LEVELS[li];
+    const k=L.secretKey;
+    // it has to STAND on something, or it is floating in the sky
+    const perch=L.platforms.find(p=>!p.lavaPit && Math.abs(p.y-k.y)<4 &&
+                                    p.x<=k.x && p.x+p.w>=k.x);
+    check('stage '+li+' key stands on a ledge', !!perch,
+          JSON.stringify(k)+' -> '+(perch?perch.x+'@'+perch.y:'nothing'));
+    // ...and that ledge has to be ABOVE everything on the ordinary route.
+    // A lowBar or a curtain hangs from the ceiling and is a blocker rather
+    // than somewhere to stand, so neither counts as a higher ledge — the
+    // reachability audit excludes curtains for the same reason.
+    const standable=(p)=>!p.lavaPit && !p.lowBar && !p.curtain;
+    const higher=L.platforms.filter(p=>standable(p) && !p.goal && p!==perch && p.y<perch.y);
+    check('...and it is the highest ledge in the stage', higher.length===0,
+          higher.map(p=>p.x+'@'+p.y).join(' '));
+    // the route's own ledges are well below it, so it is a detour
+    const route=L.platforms.filter(p=>standable(p)&&p!==perch&&p.y<g.GROUND_Y);
+    const nearest=Math.min(...route.map(p=>p.y-perch.y));
+    check('...a real climb above the route', nearest>=80, nearest);
+  }
+}
+
+// ── scenario 116: picking it up ─────────────────────────────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the stage laid out its key', !!g.secretKey, g.secretKey);
+  check('...and it is not held yet', g.keyHeld()===false);
+  check('...and nothing is sealed yet', store.getItem('neonDinoSecrets')===null);
+  g.drawSecretKey();
+  check('the key renders', true);
+
+  const k=g.secretKey;
+  const before=g.score;
+  for(let i=0;i<8 && !g.keyHeld();i++){
+    g.player.x=k.x-g.PLAYER_W/2; g.player.y=k.y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('touching it takes it', g.keyHeld()===true);
+  check('...and says so on screen', g.keyNoticeTimer>0, g.keyNoticeTimer);
+  g.drawKeyNotice();
+  check('...the KEY COLLECTED notice renders', true);
+  check('the key alone is worth no score', g.score===before, before+' -> '+g.score);
+  check('the stage is sealed', g.hasSeal(0)===true);
+  // asserting the in-memory object would pass with the setItem deleted
+  const saved=JSON.parse(store.getItem('neonDinoSecrets'));
+  check('...and the seal is written to the store', saved['stage0_key']===true,
+        store.getItem('neonDinoSecrets'));
+}
+
+// ── scenario 117: the chest wants the key ───────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('there is a chest', !!g.secretChest, g.secretChest);
+  const goal=g.platforms.find(p=>p.goal);
+  check('...and it sits on the goal ledge',
+        g.secretChest.x>=goal.x && g.secretChest.x<=goal.x+goal.w,
+        g.secretChest.x+' vs '+goal.x+'..'+(goal.x+goal.w));
+  g.drawSecretChest();
+  check('the chest renders', true);
+
+  // walk into it with no key: nothing happens. The goal ledge has coins on
+  // it, and a dino standing there collects them — so the floor is cleared
+  // before the score is used as evidence of anything.
+  const c=g.secretChest;
+  g.coins.length=0; g.drops.length=0;
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const before=g.score;
+  for(let i=0;i<6;i++){
+    g.player.x=c.x; g.player.y=c.y-g.PLAYER_H+20;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('a locked chest stays locked', g.secretChest.open===false);
+  check('...and pays nothing', g.score===before, before+' -> '+g.score);
+  check('...and grants no shield', !g.player.activePower, g.player.activePower);
+}
+
+// ── scenario 118: opening it ────────────────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  // take the key first
+  const k=g.secretKey;
+  for(let i=0;i<8 && !g.keyHeld();i++){
+    g.player.x=k.x-g.PLAYER_W/2; g.player.y=k.y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999;
+    step(1);
+  }
+  check('key in hand', g.keyHeld()===true);
+
+  const c=g.secretChest;
+  g.coins.length=0; g.drops.length=0;
+  for(const e of g.enemies) e.dead=true;
+  for(const e of g.groundEnemies) e.dead=true;
+  const before=g.score;
+  for(let i=0;i<20 && !g.secretChest.open;i++){
+    g.player.x=c.x; g.player.y=c.y-g.PLAYER_H+20;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('the key opens the chest', g.secretChest.open===true);
+  check('...and it pays ten thousand', g.score-before>=g.SECRET_SCORE,
+        (g.score-before)+' vs '+g.SECRET_SCORE);
+  check('...and hands over a shield',
+        !!g.player.activePower && g.player.activePower.kind==='shield',
+        g.player.activePower && g.player.activePower.kind);
+  check('...for ten seconds', !!g.player.activePower &&
+        Math.abs(g.player.activePower.maxTimer-10)<0.01,
+        g.player.activePower && g.player.activePower.maxTimer);
+  g.drawSecretChest();
+  check('an opened chest renders', true);
+
+  // it pays once
+  g.coins.length=0; g.drops.length=0;
+  const after=g.score;
+  for(let i=0;i<6;i++){
+    g.player.x=c.x; g.player.y=c.y-g.PLAYER_H+20;
+    g.player.invuln=999; step(1);
+  }
+  check('a chest cannot be opened twice', g.score===after, after+' -> '+g.score);
+}
+
+// ── scenario 119: the seal is a record, not an inventory ────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const k=g.secretKey;
+  for(let i=0;i<8 && !g.keyHeld();i++){
+    g.player.x=k.x-g.PLAYER_W/2; g.player.y=k.y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999;
+    step(1);
+  }
+  check('found once', g.hasSeal(0)===true);
+
+  // replaying the stage puts the key back: the seal remembers, the run does not
+  g.loadLevel(0);
+  step(2);
+  check('the seal survives a reload', g.hasSeal(0)===true);
+  check('...but the key is back on its perch', g.keyHeld()===false);
+  check('...and the chest is shut again', !!g.secretChest && g.secretChest.open===false);
+}
+
+// ── scenario 120: the map shows which keys are found ────────
+{
+  const {g,step}=run({map:true});
+  const secretWorlds=g.WORLDS.map((w,i)=>g.worldHasSecret(i)?i:-1).filter(i=>i>=0);
+  check('three worlds hide a key', secretWorlds.length===3, secretWorlds.join(','));
+  check('none are found at the start',
+        secretWorlds.every(i=>g.worldHasSeal(i)===false),
+        secretWorlds.map(i=>i+':'+g.worldHasSeal(i)).join(' '));
+  g.drawWorldMap();
+  check('the map renders with the keys dim', true);
+
+  // seal the volcano's and the map should know
+  g.secretSeals['stage0_key']=true;
+  check('the volcano key now reads as found', g.worldHasSeal(0)===true);
+  check('...and the others still do not',
+        secretWorlds.filter(i=>i!==0).every(i=>g.worldHasSeal(i)===false),
+        secretWorlds.map(i=>i+':'+g.worldHasSeal(i)).join(' '));
+  g.drawWorldMap();
+  check('the map renders with one key lit', true);
+
+  // a world that hides nothing gets no glyph at all
+  const none=g.WORLDS.map((w,i)=>i).filter(i=>!g.worldHasSecret(i));
+  check('a world with no secret shows no key', none.length>0, none.join(','));
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

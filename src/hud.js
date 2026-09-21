@@ -609,6 +609,10 @@ function drawWorldMap(){
       ctx.fillText("YAKINDA",x,y+74);
     }
 
+    // the secret: a key glyph under any world that hides one. Gold once it
+    // has ever been found, dim grey until then.
+    if(worldHasSecret(i)) drawKeyGlyph(x,y+82,worldHasSeal(i),1.2);
+
     // CLEARED stamp — slams down on arrival, then just sits there
     if(st.cleared){
       let sc=1, rot=-0.22;
