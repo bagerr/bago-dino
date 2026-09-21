@@ -21,6 +21,7 @@ function update(dt){
     updateParticles(dt);
     // the wipe prompt owns the input while it is up, so a stray ENTER
     // cannot start a world behind it
+    updateAmbient(dt);
     if(updateReset(dt)) return;
     if(mapStampTimer>0){
       mapStampTimer-=dt;

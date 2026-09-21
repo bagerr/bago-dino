@@ -78,7 +78,7 @@ function loop(now){
   drawBossRage();
   if(STATE==="playing") drawRadio();
 
-  if(STATE==="map"){ drawWorldMap(); drawResetPrompt(); }
+  if(STATE==="map"){ drawWorldMap(); drawCRT(); drawVignette(); drawResetPrompt(); }
   if(STATE==="hangar") drawHangar();
   if(STATE==="brood") drawBrood();
   if(STATE==="arsenal") drawArsenal();

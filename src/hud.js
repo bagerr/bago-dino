@@ -527,17 +527,11 @@ function drawMissionReport(){
 // ones behind you, padlocks on the ones ahead. Lock state lives in
 // localStorage, so a refresh does not undo an evening's progress.
 function drawWorldMap(){
-  const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,"#05030f"); g.addColorStop(0.55,"#0b0722"); g.addColorStop(1,"#12061a");
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  // the same starfield as the cave, drifting on its own
-  for(const s of stars){
-    const sx=((s.x+t*4)%W+W)%W;
-    ctx.globalAlpha=0.25+0.35*Math.sin(t*1.5+s.twinkle);
-    ctx.fillStyle="#b8d4ff";
-    ctx.beginPath(); ctx.arc(sx,s.y*0.9+30,s.r,0,Math.PI*2); ctx.fill();
-  }
-  ctx.globalAlpha=1;
+  // the room, from the floor up: the situation table, the sonar going round
+  // it, then the walls taking the colour of whatever the cursor is on
+  drawMapPlate();
+  drawSonar();
+  drawAmbientWalls();
 
   // header
   ctx.textAlign="center";
@@ -589,12 +583,16 @@ function drawWorldMap(){
     ctx.fillStyle=col;
     ctx.beginPath(); ctx.arc(x,y,11,0,Math.PI*2); ctx.fill();
 
-    if(!st.unlocked||!w.levels.length){
+if(!st.unlocked||!w.levels.length){
       // padlock: shackle + body, drawn small so it reads at a glance
       ctx.strokeStyle="#cbd5e1"; ctx.lineWidth=2.5;
       ctx.beginPath(); ctx.arc(x,y-4,6,Math.PI,0); ctx.stroke();
       ctx.fillStyle="#cbd5e1";
       ctx.fillRect(x-8,y-3,16,12);
+    } else {
+      // open: the padlock comes off and the region signs its own node
+      drawBiomeEmblem(w.id,x,y,"#0a0a18");
+      drawBiomeEmblem(w.id,x,y,w.color);
     }
 
     ctx.textAlign="center";
@@ -611,7 +609,9 @@ function drawWorldMap(){
 
     // the secret: a key glyph under any world that hides one. Gold once it
     // has ever been found, dim grey until then.
-    if(worldHasSecret(i)) drawKeyGlyph(x,y+82,worldHasSeal(i),1.2);
+    // the key: gold and lit once found, a dim silhouette until then
+    // (the brief asked for drop-shadow; glow() is the canvas equivalent)
+    if(worldHasSecret(i)) drawKeyGlyph(x,y+82,worldHasSeal(i),1.35);
 
     // CLEARED stamp — slams down on arrival, then just sits there
     if(st.cleared){

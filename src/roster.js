@@ -67,7 +67,11 @@ function saveRoster(){
 // than repeating, because two hatchlings called PATİ makes the loss of one
 // of them mean nothing.
 function freshName(){
+  // the fallen keep their names too. A lost ÇAKIL and a living ÇAKIL is
+  // exactly what this function exists to prevent — and the memorial is the
+  // one place where a repeated name empties the loss of its meaning.
   const taken=new Set(roster.members.map(m=>m.name));
+  for(const f of (roster.fallen||[])) taken.add(f.name);
   const free=HATCH_NAMES.filter(n=>!taken.has(n));
   if(free.length) return free[Math.floor(Math.random()*free.length)];
   for(let i=2;i<99;i++){

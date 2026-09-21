@@ -60,7 +60,7 @@ function check(name,cond,extra){
 }
 
 // ── stub canvas 2d context ────────────────────────────────────
-const drawStats={quad:0, images:[], rotations:[]};
+const drawStats={quad:0, paths:0, images:[], rotations:[]};
 function makeCtx(){
   const grad={addColorStop(){}};
   // a translate/scale stack, so a recorded destination rect is where the art
@@ -75,7 +75,8 @@ function makeCtx(){
     rotate(a){ drawStats.rotations.push(a); },
     scale(a,b){ kx*=(a===undefined?1:a); ky*=(b===undefined?1:b); },
     setTransform(){ tx=0; ty=0; kx=1; ky=1; },
-    beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},
+    // counting paths is what lets a scenario tell two drawn SHAPES apart
+    beginPath(){ drawStats.paths++; },closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},
     quadraticCurveTo(){ drawStats.quad++; },bezierCurveTo(){},rect(){},clip(){},
     fill(){},stroke(){},fillRect(){},strokeRect(){},clearRect(){},
     fillText(){},strokeText(){},setLineDash(){},
@@ -296,6 +297,13 @@ function run(opts){
   get bank(){return bank;},
   get roster(){return roster;},
   beginCapsule:()=>beginCapsule(), capsuleMates:(m)=>capsuleMates(m),
+  freshName:()=>freshName(),
+  drawMapPlate:()=>drawMapPlate(), drawSonar:()=>drawSonar(),
+  drawAmbientWalls:()=>drawAmbientWalls(), drawCRT:()=>drawCRT(),
+  drawVignette:()=>drawVignette(), drawBiomeEmblem:(...a)=>drawBiomeEmblem(...a),
+  updateAmbient:(dt)=>updateAmbient(dt), hexToRGB:(h)=>hexToRGB(h),
+  get ambientRGB(){return ambientRGB;},
+  get mapSel(){return mapSel;}, set mapSel(v){mapSel=v;},
   deedForDelivered:(r)=>deedForDelivered(r),
   deedForLost:(r)=>deedForLost(r),
   recordDeed:(r)=>recordDeed(r), recordFallen:(r)=>recordFallen(r),
@@ -5410,8 +5418,10 @@ function runSuite(){
   for(let i=0;i<g.FALLEN_KEPT+15;i++) g.recordFallen(g.makeHatchling('baby'));
   check('the memorial has a limit', g.roster.fallen.length===g.FALLEN_KEPT,
         g.roster.fallen.length);
-  check('...and it keeps the most recent', g.roster.fallen[0].name!==name,
-        g.roster.fallen[0].name);
+  // by id, not by name: names are drawn from a pool and comparing them
+  // makes the check depend on which one the pool happened to hand out
+  check('...and it keeps the most recent', g.roster.fallen[0].id!==fallen.id,
+        g.roster.fallen[0].id+' vs '+fallen.id);
 }
 
 // ── scenario 144: the book, and its two tabs ────────────────
@@ -5595,6 +5605,126 @@ function runSuite(){
         saved.nextCapsule);
   g.drawBrood();
   check('the card renders the companions', true);
+}
+
+// ── scenario 149: the mission screen is a room ──────────────
+{
+  const {g,step,drawStats,artLoads}=run({map:true});
+  check('it is the map', g.STATE==='map', g.STATE);
+
+  // draw once to let the sheet load: computeSpriteBBox blits it to an
+  // offscreen canvas to measure it, and that blit is recorded too
+  g.drawWorldMap();
+  drawStats.images.length=0;
+  g.drawWorldMap();
+  if(artLoads){
+    const plate=String(g.assetURL('mission_map_bg.png'));
+    const hit=drawStats.images.filter(im=>String(im.src||'')===plate);
+    check('the situation table is on the floor', hit.length===1, hit.length);
+    // cover, not squash: the picture keeps its shape and fills both axes
+    const im=hit[0];
+    check('...covering the screen',
+          Math.abs(im.dw)>=900-0.5 && Math.abs(im.dh)>=506-0.5,
+          im.dw+'x'+im.dh);
+    check('...without being squashed',
+          Math.abs((Math.abs(im.dw)/im.sw)-(Math.abs(im.dh)/im.sh))<0.001,
+          (im.dw/im.sw)+' vs '+(im.dh/im.sh));
+  } else {
+    check('with no plate it still paints a floor', true);
+    check('...and draws no backdrop', drawStats.images.every(im=>
+          String(im.src||'').indexOf('mission_map_bg')<0));
+    check('...and nothing is squashed', true);
+  }
+
+  g.drawSonar(); g.drawAmbientWalls(); g.drawCRT(); g.drawVignette();
+  check('the sonar, the walls and the glass render', true);
+}
+
+// ── scenario 150: the walls take the region's colour ────────
+{
+  const {g,step}=run({map:true});
+  const colOf=(i)=>g.hexToRGB(g.WORLDS[i].color);
+  check('the regions do not share a colour',
+        new Set(g.WORLDS.map(w=>w.color)).size===g.WORLDS.length,
+        g.WORLDS.map(w=>w.color).join(','));
+
+  // settle on the first, then move the cursor and watch it travel
+  g.mapSel=0;
+  for(let i=0;i<200;i++) g.updateAmbient(1/60);
+  const atVolcano=g.ambientRGB.slice();
+  const wantV=colOf(0);
+  check('the walls settle on the selected region',
+        atVolcano.every((v,i)=>Math.abs(v-wantV[i])<6),
+        atVolcano.map(Math.round).join(',')+' vs '+wantV.join(','));
+
+  g.mapSel=2;                      // the peaks
+  const oneFrame=(()=>{ g.updateAmbient(1/60); return g.ambientRGB.slice(); })();
+  check('...and it eases rather than cutting',
+        oneFrame.some((v,i)=>Math.abs(v-atVolcano[i])>0.01) &&
+        oneFrame.some((v,i)=>Math.abs(v-colOf(2)[i])>6),
+        oneFrame.map(Math.round).join(','));
+
+  for(let i=0;i<200;i++) g.updateAmbient(1/60);
+  const atIce=g.ambientRGB.slice();
+  const wantI=colOf(2);
+  check('...arriving at the new one',
+        atIce.every((v,i)=>Math.abs(v-wantI[i])<6),
+        atIce.map(Math.round).join(',')+' vs '+wantI.join(','));
+  check('...which is a different colour',
+        atIce.some((v,i)=>Math.abs(v-atVolcano[i])>20),
+        atVolcano.map(Math.round).join(',')+' -> '+atIce.map(Math.round).join(','));
+}
+
+// ── scenario 151: an open region signs its own node ─────────
+{
+  const {g,step}=run({map:true});
+  // each emblem is a different drawing, not the same one in four colours.
+  // Path count is a crude fingerprint, but it is a fingerprint.
+  const shape={};
+  for(const w of g.WORLDS){
+    drawStats.paths=0;
+    g.drawBiomeEmblem(w.id,100,100,w.color);
+    shape[w.id]=drawStats.paths;
+  }
+  check('every region has an emblem that draws',
+        Object.values(shape).every(n=>n>0), JSON.stringify(shape));
+  check('...and no two regions share one',
+        new Set(Object.values(shape)).size===g.WORLDS.length,
+        JSON.stringify(shape));
+  g.drawBiomeEmblem('nonesuch',100,100,'#fff');
+  check('...and an unknown one still draws something', true);
+
+  // locked regions keep the padlock; open ones lose it
+  check('only the volcano is open at the start',
+        g.worldState(0).unlocked===true && g.worldState(1).unlocked===false,
+        [0,1,2,3].map(i=>i+':'+g.worldState(i).unlocked).join(' '));
+  g.drawWorldMap();
+  check('the map renders with one open and three locked', true);
+
+  g.startWorld(0); g.finishWorld();
+  check('clearing it opens the canopy', g.worldState(1).unlocked===true);
+  g.drawWorldMap();
+  check('...and the map renders with two open', true);
+}
+
+// ── scenario 152: a lost name is not handed out again ───────
+{
+  const {g,step}=run({map:true});
+  // lose one, then fill the brood and make sure nobody takes its name
+  const lost=g.makeHatchling('baby');
+  g.recordFallen(lost);
+  check('somebody was lost', g.roster.fallen.length===1, g.roster.fallen.length);
+
+  const names=[];
+  for(let i=0;i<20;i++){
+    const r=g.makeHatchling('baby');
+    g.enrolHatchling(r,'D');
+    names.push(r.name);
+  }
+  check('the lost keep their names',
+        !names.includes(lost.name), lost.name+' reissued');
+  check('...and the living do not repeat each other either',
+        new Set(names).size===names.length, names.length-new Set(names).size);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
