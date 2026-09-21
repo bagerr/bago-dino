@@ -138,25 +138,28 @@ function update(dt){
   updateVines(dt,left,right,jump);
   // hanging from a vine suspends the dino's own physics entirely — the
   // pendulum owns its position until it lets go
+  // Everything from here to the end of this block is the dino's OWN physics
+  // — input, the slide, the jetpack, gravity, the collision resolver. It is
+  // the only part a vine has to suppress, because the pendulum owns the
+  // dino's position while it hangs.
+  //
+  // It used to be suppressed with `return`, which also stopped the enemies,
+  // the boss, the cages, the portal and the stage clock: the world went
+  // still for as long as you hung there. A labelled block skips the physics
+  // and nothing else. The contents keep their original indentation on
+  // purpose — re-indenting 220 lines would bury the change.
+  playerPhysics: {
   if(vineGrab){
     if(player.invuln>0) player.invuln-=dt;
-    // Hanging is a rest: the pack refuels while you swing. The early return
-    // below skips the ordinary regen entirely (that only runs on the ground,
-    // and a vine forces onGround false), so it has to happen here.
+    // Hanging is a rest: the pack refuels while you swing. The ordinary
+    // regen only runs on the ground and a vine forces onGround false, so it
+    // has to happen here.
     player.jetFuel=Math.min(1,player.jetFuel+JET_REGEN*1.6*jetRegenMult()*followerPower().fuelMult*dt);
-    updateParticles(dt);
-    updateFloatingTexts(dt);
-    updateFollowers(dt);
-    updateScaredBabies(dt);
-    applyShake(dt);
-    const camRiseV=LEVELS[levelIndex].camRise||0;
-    const wantYV=camRiseV>0?clamp(CAM_LIFT_ANCHOR-player.y,0,camRiseV):0;
-    camY=lerp(camY,wantYV,dt*(camRiseV>0?3.4:5));
-    if(!cameraLock){
-      const tX=player.x+PLAYER_W/2-W*0.33;
-      camX=clamp(lerp(camX,tX,dt*3.2),0,Math.max(0,levelWidth-W));
-    }
-    return;
+    // ...and out, past the dino's own movement. The camera, the particles,
+    // the followers and the rest of the world are handled by the body below
+    // exactly as they are on any other frame — doing them here as well is
+    // what made this branch a second, worse copy of update().
+    break playerPhysics;
   }
 
   // Ice takes the grip away: you accelerate slowly and you cannot stop dead,
@@ -390,6 +393,7 @@ function update(dt){
 
   // invuln
   if(player.invuln>0) player.invuln-=dt;
+  }   // end playerPhysics — a vine jumps to here
 
   // ── continuous plasma laser ──
   // holding fire keeps a single hitscan ray alive every frame instead of

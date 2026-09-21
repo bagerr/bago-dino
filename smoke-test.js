@@ -208,7 +208,9 @@ function run(opts){
   get windDir(){return windDir;},     set windDir(v){windDir=v;},
   get windTimer(){return windTimer;}, set windTimer(v){windTimer=v;},
   updateWind:(dt)=>updateWind(dt),
-  get vineGrab(){return vineGrab;},
+  get vineGrab(){return vineGrab;}, set vineGrab(v){vineGrab=v;},
+  get levelTime(){return levelTime;}, set levelTime(v){levelTime=v;},
+  vineTipOf:(v)=>vineTip(v),
   get camY(){return camY;},
   get CRUMBLE_DELAY(){return CRUMBLE_DELAY;},
   get BOUNCE_VY(){return BOUNCE_VY;}, get BOUNCE_FUEL(){return BOUNCE_FUEL;},
@@ -4630,6 +4632,114 @@ function runSuite(){
   // a world that hides nothing gets no glyph at all
   const none=g.WORLDS.map((w,i)=>i).filter(i=>!g.worldHasSecret(i));
   check('a world with no secret shows no key', none.length>0, none.join(','));
+}
+
+// ── scenario 121: the world keeps running on a vine ─────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);              // ROTWOOD RISE: vines AND the rising fog
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the stage hangs a vine', g.vines.length>=1, g.vines.length);
+
+  // hang the dino on it directly: the grab itself is covered elsewhere and
+  // this scenario is about what happens WHILE it hangs
+  const v=g.vines[0];
+  const tip=g.vineTipOf(v);
+  g.player.x=tip.x-g.PLAYER_W/2; g.player.y=tip.y-g.PLAYER_H*0.35;
+  g.player.vy=40; g.player.onGround=false;
+  for(let i=0;i<30 && !g.vineGrab;i++){
+    const tp=g.vineTipOf(v);
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=tp.x-g.PLAYER_W/2; g.player.y=tp.y-g.PLAYER_H*0.35;
+    g.player.vy=40; g.player.onGround=false;
+    step(1);
+  }
+  check('the dino is hanging', !!g.vineGrab);
+
+  // ── everything below is what should keep happening while it hangs ──
+  const enemy=g.enemies.filter(e=>!e.dead)[0];
+  const ex0=enemy?enemy.x:null, ey0=enemy?enemy.y:null;
+  const fog0=g.fogY;
+  const time0=g.levelTime;
+  const py0=g.player.y;
+
+  for(let i=0;i<40;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+
+  check('the pendulum still owns the dino', !!g.vineGrab);
+  check('enemies keep moving while you hang',
+        enemy ? (enemy.x!==ex0 || enemy.y!==ey0) : true,
+        enemy ? (ex0+','+ey0+' -> '+enemy.x+','+enemy.y) : 'no enemy');
+  check('the rising fog keeps rising', g.fogY<fog0, fog0+' -> '+g.fogY);
+  check('the stage clock keeps running', g.levelTime>time0,
+        time0+' -> '+g.levelTime);
+  check('...and the dino did not simply fall', Math.abs(g.player.y-py0)<200,
+        py0+' -> '+g.player.y);
+}
+
+// ── scenario 122: a vine is not a safe room ─────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const v=g.vines[0];
+  for(let i=0;i<30 && !g.vineGrab;i++){
+    const tp=g.vineTipOf(v);
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=tp.x-g.PLAYER_W/2; g.player.y=tp.y-g.PLAYER_H*0.35;
+    g.player.vy=40; g.player.onGround=false;
+    step(1);
+  }
+  check('hanging', !!g.vineGrab);
+
+  // the fog is the stage's whole pressure: if it can be waited out from a
+  // vine, the climb has an exploit rather than a timer
+  g.fogY=g.player.y+40;        // right under the dino's feet
+  g.player.invuln=0; g.player.hp=3;
+  const hp0=g.player.hp;
+  let burned=false;
+  for(let i=0;i<120 && !burned;i++){
+    g.fogY=Math.min(g.fogY,g.player.y+40);
+    step(1);
+    if(g.player.hp<hp0) burned=true;
+  }
+  check('the rot still burns you on a vine', burned, g.player.hp+'/'+hp0);
+}
+
+// ── scenario 123: and the pendulum is still in charge ───────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(4);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const v=g.vines[0];
+  for(let i=0;i<30 && !g.vineGrab;i++){
+    const tp=g.vineTipOf(v);
+    g.player.invuln=999; g.player.hp=99;
+    g.player.x=tp.x-g.PLAYER_W/2; g.player.y=tp.y-g.PLAYER_H*0.35;
+    g.player.vy=40; g.player.onGround=false;
+    step(1);
+  }
+  check('hanging on the climb', !!g.vineGrab);
+
+  // the dino must not be dragged down by its own gravity: on a vine the
+  // pendulum decides where it is, which is exactly what the early return
+  // was there to protect
+  const held=[];
+  for(let i=0;i<50;i++){ g.player.invuln=999; step(1); held.push(g.player.y); }
+  const drop=Math.max(...held)-Math.min(...held);
+  check('the dino swings rather than falls', drop<220, drop.toFixed(0));
+  check('...and is still on the vine after fifty frames', !!g.vineGrab);
+
+  // and letting go still works
+  keys({Space:true});
+  for(let i=0;i<4 && g.vineGrab;i++) step(1);
+  keys({Space:false});
+  check('jump still releases it', g.vineGrab===null);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
