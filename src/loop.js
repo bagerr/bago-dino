@@ -81,6 +81,7 @@ function loop(now){
   if(STATE==="map") drawWorldMap();
   if(STATE==="hangar") drawHangar();
   if(STATE==="brood") drawBrood();
+  if(STATE==="arsenal") drawArsenal();
   if(STATE==="continue") drawContinue();
   if(STATE==="report") drawMissionReport();
   if(STATE==="dead") drawGameOver();

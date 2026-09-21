@@ -42,6 +42,7 @@ function update(dt){
     mapKeyWasDown=anyDir;
     if(K["KeyH"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyH"]=false; openHangar(); return; }
     if(K["KeyB"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyB"]=false; openBrood(); return; }
+    if(K["KeyC"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyC"]=false; openArsenal(); return; }
     if(K["Enter"]&&stateTimer>0.25&&mapStampTimer<=0){
       if(startWorld(mapSel)) return;
     }
@@ -52,6 +53,7 @@ function update(dt){
   if(STATE==="hangar"){ updateHangar(dt); return; }
   // ...and looking at who it was all for
   if(STATE==="brood"){ updateBrood(dt); return; }
+  if(STATE==="arsenal"){ updateArsenal(dt); return; }
 
   // credit clock: ENTER spends one, R gives up, zero means it is really over
   if(STATE==="continue"){
@@ -407,6 +409,9 @@ function update(dt){
   // holding the trigger burns the clock on anything but the base beam
   if(fire && weapon!=="beam"){
     weaponAmmo-=dt;
+    // practice is measured in ammo actually spent, so a letter cannot be
+    // mastered without paying for it
+    addMastery(weapon,dt);
     if(weaponAmmo<=0) dropToBaseWeapon();
   }
   if(fire){
@@ -1777,7 +1782,7 @@ function restartGame(){
   STATE="playing"; stateTimer=0; reportTimer=0;
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
   continuesLeft=maxContinues(); continueTimer=0;
-  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
+  applyLoadout();
   screenShake=0; bossShakeTimer=0;
   // back to the top of the CURRENT world, not to the first stage of the game
   if(!startWorld(worldIndex)) startWorld(0);

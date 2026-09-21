@@ -31,6 +31,17 @@ window.addEventListener("pointerdown", ev=>{
     if(touchMode) touchPressAt(ev.pointerId===undefined?0:ev.pointerId,p);
     return;
   }
+  // the arsenal: tap a row to equip it, or the button to leave
+  if(STATE==="arsenal"){
+    const b=arsenalBackButton();
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){ closeArsenal(); return; }
+    const row=arsenalRowAt(p.x,p.y);
+    if(row>=0){
+      armSel=row;
+      if(setLoadout(arsenalList()[row])) playPowerUp(); else playPew();
+    }
+    return;
+  }
   // the brood roster: the only thing to tap is the way out
   if(STATE==="brood"){
     const b=broodBackButton();
@@ -56,6 +67,8 @@ window.addEventListener("pointerdown", ev=>{
     if(p.x>=hb.x&&p.x<=hb.x+hb.w&&p.y>=hb.y&&p.y<=hb.y+hb.h){ openHangar(); return; }
     const bb=mapBroodButton();
     if(p.x>=bb.x&&p.x<=bb.x+bb.w&&p.y>=bb.y&&p.y<=bb.y+bb.h){ openBrood(); return; }
+    const ab=mapArsenalButton();
+    if(p.x>=ab.x&&p.x<=ab.x+ab.w&&p.y>=ab.y&&p.y<=ab.y+ab.h){ openArsenal(); return; }
     for(let i=0;i<WORLDS.length;i++){
       const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
       if(Math.hypot(p.x-nx,p.y-ny)>38) continue;

@@ -294,6 +294,22 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  get arsenal(){return arsenal;},
+  get MASTERY_STEPS(){return MASTERY_STEPS;},
+  get LOADOUT_AMMO_FRAC(){return LOADOUT_AMMO_FRAC;},
+  masteryLevel:(k)=>masteryLevel(k), masteryTime:(k)=>masteryTime(k),
+  masteryAmmoMult:(k)=>masteryAmmoMult(k),
+  isUnlocked:(k)=>isUnlocked(k), addMastery:(k,dt)=>addMastery(k,dt),
+  ammoFor:(k)=>ammoFor(k), setLoadout:(k)=>setLoadout(k),
+  applyLoadout:()=>applyLoadout(), arsenalList:()=>arsenalList(),
+  arsenalKinds:()=>arsenalKinds(),
+  openArsenal:()=>openArsenal(), closeArsenal:()=>closeArsenal(),
+  updateArsenal:(dt)=>updateArsenal(dt), drawArsenal:()=>drawArsenal(),
+  arsenalRowAt:(x,y)=>arsenalRowAt(x,y),
+  arsenalBackButton:()=>arsenalBackButton(),
+  mapArsenalButton:()=>mapArsenalButton(),
+  get armSel(){return armSel;}, set armSel(v){armSel=v;},
+  get weaponAmmo(){return weaponAmmo;}, set weaponAmmo(v){weaponAmmo=v;},
   get arcSeen(){return arcSeen;},
   get ARC_BRIEF(){return ARC_BRIEF;}, get ARC_STAGE(){return ARC_STAGE;},
   get ARC_LOG(){return ARC_LOG;}, get ARC_DEBRIEF(){return ARC_DEBRIEF;},
@@ -4885,6 +4901,192 @@ function runSuite(){
   check('the ending renders', true);
   g.drawWin();
   check('the victory screen renders with it', true);
+}
+
+// ── scenario 128: nothing is mastered to begin with ─────────
+{
+  const {g,step,store}=run({map:true});
+  const kinds=g.arsenalKinds();
+  check('there are letters to master', kinds.length>=5, kinds.join(','));
+  check('the base beam is not one of them', !kinds.includes('beam'), kinds.join(','));
+  check('nothing is practised yet',
+        kinds.every(k=>g.masteryLevel(k)===0),
+        kinds.map(k=>k+':'+g.masteryLevel(k)).join(' '));
+  check('...so nothing is unlocked', kinds.every(k=>g.isUnlocked(k)===false));
+  check('...but the beam always is', g.isUnlocked('beam')===true);
+  check('and the loadout starts on the beam', g.arsenal.loadout==='beam',
+        g.arsenal.loadout);
+  check('nothing is stored yet', store.getItem('neonDinoArsenal')===null);
+}
+
+// ── scenario 129: mastery is time on the trigger ────────────
+{
+  const {g,step,store}=run({map:true});
+  const kind=g.arsenalKinds()[0];
+  check('unlock takes real practice', g.MASTERY_STEPS[0]>=5, g.MASTERY_STEPS[0]);
+
+  // just under the first threshold
+  g.addMastery(kind,g.MASTERY_STEPS[0]-0.5);
+  check('nearly there is not there', g.masteryLevel(kind)===0, g.masteryLevel(kind));
+  check('...and it still cannot be equipped', g.setLoadout(kind)===false);
+
+  g.addMastery(kind,1);
+  check('crossing the line unlocks it', g.masteryLevel(kind)===1, g.masteryLevel(kind));
+  check('...and it is written down', !!store.getItem('neonDinoArsenal'));
+  const saved=JSON.parse(store.getItem('neonDinoArsenal'));
+  check('...with the practice in it', (saved.mastery||{})[kind]>0,
+        JSON.stringify(saved.mastery));
+
+  // the ladder keeps going, and stops
+  g.addMastery(kind,g.MASTERY_STEPS[2]);
+  check('mastery tops out', g.masteryLevel(kind)===g.MASTERY_STEPS.length,
+        g.masteryLevel(kind));
+  g.addMastery(kind,10000);
+  check('...and stays topped out', g.masteryLevel(kind)===g.MASTERY_STEPS.length,
+        g.masteryLevel(kind));
+}
+
+// ── scenario 130: mastery buys magazine, never damage ───────
+{
+  const {g,step}=run({map:true});
+  const kind=g.arsenalKinds()[0];
+  const base=g.ammoFor(kind);
+  check('a fresh letter carries its table magazine',
+        Math.abs(base-g.WEAPONS[kind].ammo)<0.001, base+' vs '+g.WEAPONS[kind].ammo);
+
+  g.addMastery(kind,g.MASTERY_STEPS[1]);
+  const better=g.ammoFor(kind);
+  check('mastery makes the magazine bigger', better>base, base+' -> '+better);
+  check('...but not endless', better<base*2, better+' vs '+base);
+
+  // the rule the hangar established and this has to keep: capability, not
+  // power. Nothing in the arsenal may touch what a shot DOES.
+  const before=JSON.stringify(Object.entries(g.WEAPONS).map(([k,w])=>[k,w.letter,w.color]));
+  g.addMastery(kind,g.MASTERY_STEPS[2]*2);
+  const after=JSON.stringify(Object.entries(g.WEAPONS).map(([k,w])=>[k,w.letter,w.color]));
+  check('mastery rewrites nothing about the weapon itself', before===after);
+  check('and the dino is no faster for it', g.MOVE_SPD===200, g.MOVE_SPD);
+}
+
+// ── scenario 131: a requisitioned letter is half a magazine ─
+{
+  const {g,step}=run({map:true});
+  const kind=g.arsenalKinds()[0];
+  g.addMastery(kind,g.MASTERY_STEPS[0]+1);
+  check('unlocked', g.isUnlocked(kind));
+  check('equipping works', g.setLoadout(kind)===true);
+  check('...and is remembered', g.arsenal.loadout===kind, g.arsenal.loadout);
+
+  g.startWorld(0);
+  step(2);
+  check('the mission starts with it', g.weapon===kind, g.weapon);
+  const full=g.ammoFor(kind);
+  check('...on a partial magazine', g.weaponAmmo<full,
+        g.weaponAmmo.toFixed(2)+' vs full '+full.toFixed(2));
+  check('...but enough to be worth bringing', g.weaponAmmo>full*0.3,
+        g.weaponAmmo.toFixed(2));
+
+  // the floor capsule is still the full one, which is what keeps pickups
+  // worth crossing a stage for
+  g.equipWeapon(kind);
+  check('a floor capsule is the full magazine',
+        Math.abs(g.weaponAmmo-full)<0.001, g.weaponAmmo+' vs '+full);
+}
+
+// ── scenario 132: a locked letter cannot be smuggled in ─────
+{
+  const {g,step}=run({map:true});
+  const kind=g.arsenalKinds()[1];
+  check('it is locked', g.isUnlocked(kind)===false);
+  check('equipping it is refused', g.setLoadout(kind)===false);
+  check('...and the loadout is untouched', g.arsenal.loadout==='beam', g.arsenal.loadout);
+
+  // even if the stored value is tampered with, the mission falls back
+  g.arsenal.loadout=kind;
+  g.startWorld(0);
+  step(2);
+  check('a mission will not start with a letter you never learned',
+        g.weapon==='beam', g.weapon);
+  check('...and the beam is endless as always', g.weaponAmmo===Infinity, g.weaponAmmo);
+}
+
+// ── scenario 133: practising happens by playing ─────────────
+{
+  const {g,step,keys}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  for(const wp of g.weaponPickups) wp.alive=false;
+  const kind='spread';
+  g.equipWeapon(kind);
+  const t0=g.masteryTime(kind);
+
+  keys({KeyF:true});
+  for(let i=0;i<40;i++){
+    g.player.invuln=999; g.player.hp=99; g.weaponAmmo=99;
+    step(1);
+  }
+  keys({KeyF:false});
+  check('firing a letter practises it', g.masteryTime(kind)>t0,
+        t0+' -> '+g.masteryTime(kind));
+
+  // and the beam, which costs nothing, teaches nothing
+  g.equipWeapon('beam');
+  const b0=g.masteryTime('beam');
+  keys({KeyF:true});
+  for(let i=0;i<30;i++){ g.player.invuln=999; step(1); }
+  keys({KeyF:false});
+  check('the free beam earns no mastery', g.masteryTime('beam')===b0,
+        b0+' -> '+g.masteryTime('beam'));
+}
+
+// ── scenario 134: the armoury screen ────────────────────────
+{
+  const {g,step,keys,click}=run({map:true});
+  keys({KeyC:true}); step(30); keys({KeyC:false});
+  check('C opens the armoury', g.STATE==='arsenal', g.STATE);
+  g.drawArsenal();
+  check('it renders with everything locked', true);
+
+  const list=g.arsenalList();
+  check('the beam heads the list', list[0]==='beam', list.join(','));
+  check('...and every letter is on it', list.length===1+g.arsenalKinds().length,
+        list.length);
+
+  // the cursor moves and wraps
+  const tapDown=()=>{ keys({ArrowDown:true}); g.updateArsenal(0.016);
+                      keys({ArrowDown:false}); g.updateArsenal(0.016); };
+  const first=g.armSel;
+  tapDown();
+  check('down moves the cursor', g.armSel!==first, g.armSel);
+  g.armSel=list.length-1;
+  tapDown();
+  check('...and wraps', g.armSel===0, g.armSel);
+
+  // tapping a row equips it, when it is allowed to be
+  g.touchMode=true;
+  const kind=g.arsenalKinds()[0];
+  g.addMastery(kind,g.MASTERY_STEPS[0]+1);
+  const row=list.indexOf(kind);
+  const rowY=118+row*46+12;
+  check('the tap geometry agrees with the drawn rows',
+        g.arsenalRowAt(64+10,rowY)===row, g.arsenalRowAt(64+10,rowY));
+  click(64+10,rowY);
+  check('tapping an unlocked row equips it', g.arsenal.loadout===kind,
+        g.arsenal.loadout);
+  g.drawArsenal();
+  check('it renders with one equipped', true);
+
+  // ...and a locked one is refused, not equipped
+  const locked=g.arsenalKinds().find(k=>!g.isUnlocked(k));
+  const lrow=list.indexOf(locked);
+  click(64+10,118+lrow*46+12);
+  check('tapping a locked row changes nothing', g.arsenal.loadout===kind,
+        g.arsenal.loadout);
+
+  const b=g.arsenalBackButton();
+  click(b.x+b.w/2,b.y+b.h/2);
+  check('tapping HARİTA leaves', g.STATE==='map', g.STATE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

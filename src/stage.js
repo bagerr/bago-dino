@@ -27,7 +27,7 @@ function startWorld(i){
   player.activePower=null; player.shieldCharge=false;
   player.dashTimer=0; player.dashCooldown=0; player.dashKeyWasDown=false;
   continuesLeft=maxContinues(); continueTimer=0;
-  weapon="beam"; weaponAmmo=Infinity; rocketCd=0;
+  applyLoadout();   // a requisitioned letter, at half a magazine
   rescuedTotal=0; lastRescueBonus=0; lastComboBonus=0; babyDinos=[];
   screenShake=0; bossShakeTimer=0; hitStopTimer=0;
   stopLaserSound(); stopSiren(); player.wasFiring=false;

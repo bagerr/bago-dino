@@ -320,7 +320,7 @@ let rocketCd=0;
 function equipWeapon(kind){
   const w=WEAPONS[kind];
   if(!w) return;
-  weapon=kind; weaponAmmo=w.ammo; rocketCd=0;
+  weapon=kind; weaponAmmo=ammoFor(kind); rocketCd=0;
   playPowerUp();
   spawnFloatingText(player.x+PLAYER_W/2-camX,player.y-28,w.letter+" — "+w.label,w.color,16);
   queueRadio(null,"SİLAH SİSTEMİ",[w.label+" hazır!","Cephane sınırlı — iyi kullan."],

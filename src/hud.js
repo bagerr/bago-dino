@@ -706,6 +706,21 @@ function drawWorldMap(){
   ctx.fillStyle='#66708c';
   ctx.fillText(touchMode?'DOKUN':'B',bb.x+bb.w/2,bb.y+30);
 
+  // ...and the armoury above that
+  const ab=mapArsenalButton();
+  const lw=WEAPONS[arsenal.loadout]||WEAPONS.beam;
+  ctx.fillStyle='rgba(232,121,249,0.10)';
+  ctx.fillRect(ab.x,ab.y,ab.w,ab.h);
+  ctx.strokeStyle='#e879f9'; ctx.lineWidth=1;
+  ctx.strokeRect(ab.x+0.5,ab.y+0.5,ab.w-1,ab.h-1);
+  ctx.textAlign='center';
+  ctx.font="bold 13px 'Courier New',monospace";
+  ctx.fillStyle=lw.color;
+  ctx.fillText('CEPHANE  '+lw.letter,ab.x+ab.w/2,ab.y+17);
+  ctx.font="bold 9px 'Courier New',monospace";
+  ctx.fillStyle='#66708c';
+  ctx.fillText(touchMode?'DOKUN':'C',ab.x+ab.w/2,ab.y+30);
+
   ctx.textAlign="center";
   ctx.font="bold 10px 'Courier New',monospace";
   ctx.fillStyle="#66708c";
