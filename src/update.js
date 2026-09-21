@@ -1762,9 +1762,11 @@ function endLevel(){
   // rescued WITH — how well you did it, not how long it took, because time
   // served is farmable and a grade is not.
   lastEnrolled=[];
+  // one capsule for this trip, shared by everybody who boarded it
+  const capsule=beginCapsule();
   for(const f of boarded){
     if(!f.rec) continue;
-    enrolHatchling(f.rec,grade.letter);
+    enrolHatchling(f.rec,grade.letter,capsule);
     lastEnrolled.push(f.rec);
   }
 

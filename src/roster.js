@@ -43,7 +43,7 @@ const RANKS=["","ÇAYLAK","USTA","KIDEMLİ"];
 const GRADE_RANK={S:3, A:3, B:2, C:1, D:1};
 function rankForGrade(letter){ return GRADE_RANK[letter]||1; }
 
-let roster={members:[], lost:0, delivered:0, nextId:1, fallen:[]};
+let roster={members:[], lost:0, delivered:0, nextId:1, nextCapsule:1, fallen:[]};
 try{
   const raw=localStorage.getItem("neonDinoRoster");
   if(raw){
@@ -54,6 +54,7 @@ try{
       roster.delivered=Math.max(0,Math.floor(Number(p.delivered)||0));
       roster.nextId=Math.max(1,Math.floor(Number(p.nextId)||1));
       roster.fallen=Array.isArray(p.fallen)?p.fallen.filter(f=>f&&f.name):[];
+      roster.nextCapsule=Math.max(1,Math.floor(Number(p.nextCapsule)||1));
     }
   }
 }catch(e){ /* a blocked or corrupt store just means an empty brood */ }
@@ -88,15 +89,22 @@ function makeHatchling(species){
   };
 }
 
-function enrolHatchling(rec,letter){
+// A capsule is one trip through the rift. Everybody who boarded together
+// shares its id, which is all "who came out with me" needs to be a fact
+// rather than three copies of a fact.
+function beginCapsule(){ return roster.nextCapsule++; }
+
+function enrolHatchling(rec,letter,capsule){
   if(!rec||rec.home) return null;
   rec.rank=rankForGrade(letter);
   rec.home=true;
   // the sentence of its own rescue, read off what actually happened
   recordDeed(rec);
+  // no capsule given means this one rode alone
+  rec.capsule=(capsule===undefined)?beginCapsule():capsule;
   roster.members.push({id:rec.id,name:rec.name,role:rec.role,
                        species:rec.species,rank:rec.rank,
-                       deed:rec.deed,where:rec.where});
+                       deed:rec.deed,where:rec.where,capsule:rec.capsule});
   roster.delivered++;
   saveRoster();
   return rec;
@@ -108,6 +116,12 @@ function loseHatchling(rec){
   // a counter going up is arithmetic. The memorial is the story.
   recordFallen(rec);
   saveRoster();
+}
+
+// everybody else who came through on the same trip
+function capsuleMates(m){
+  if(!m||!m.capsule) return [];
+  return roster.members.filter(o=>o!==m && o.capsule===m.capsule);
 }
 
 function roleName(id){ return (ROLES[id]||{}).name||"?"; }
@@ -238,6 +252,17 @@ function drawBrood(){
       ctx.textAlign="right";
       ctx.fillStyle="#5b7078";
       ctx.fillText(m.where||"",cx+BROOD_CARD_W-10,cy+19);
+      // who else was in that capsule. Only the living have one — the
+      // memorial is a list of people who never boarded.
+      if(!fallenTab){
+        const mates=capsuleMates(m);
+        if(mates.length){
+          let names=mates.map(o=>o.name).join(", ");
+          if(names.length>26) names=names.slice(0,24)+"…";
+          ctx.fillStyle="#6f8f88";
+          ctx.fillText(names+" ile",cx+BROOD_CARD_W-10,cy+32);
+        }
+      }
       ctx.textAlign="left";
 
       // the sentence: wrapped, because it is generated rather than

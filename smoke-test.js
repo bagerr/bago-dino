@@ -295,6 +295,7 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  beginCapsule:()=>beginCapsule(), capsuleMates:(m)=>capsuleMates(m),
   deedForDelivered:(r)=>deedForDelivered(r),
   deedForLost:(r)=>deedForLost(r),
   recordDeed:(r)=>recordDeed(r), recordFallen:(r)=>recordFallen(r),
@@ -363,7 +364,8 @@ function run(opts){
   get ROLES(){return ROLES;}, get ROLE_IDS(){return ROLE_IDS;},
   get HATCH_NAMES(){return HATCH_NAMES;},
   makeHatchling:(sp)=>makeHatchling(sp),
-  enrolHatchling:(r,l)=>enrolHatchling(r,l),
+  // forwards every argument: a fixed arity here silently drops the capsule
+  enrolHatchling:(...a)=>enrolHatchling(...a),
   loseHatchling:(r)=>loseHatchling(r),
   broodTier:(id)=>broodTier(id),
   broodWeight:(id)=>broodWeight(id),
@@ -5489,6 +5491,110 @@ function runSuite(){
     g2.wrapText(d,366,"11px 'Courier New',monospace").length>2);
   check('every sentence fits two lines on a card', tooWide.length===0,
         tooWide.join(' / '));
+}
+
+// ── scenario 146: who came out together ─────────────────────
+{
+  const {g,step}=run({map:true});
+  // three aboard the same trip
+  const cap=g.beginCapsule();
+  const crew=[];
+  for(let i=0;i<3;i++){
+    const r=g.makeHatchling('baby');
+    g.enrolHatchling(r,'B',cap);
+    crew.push(r.name);
+  }
+  const m=g.roster.members;
+  check('all three are home', m.length===3, m.length);
+  check('...and all three rode the same capsule',
+        new Set(m.map(x=>x.capsule)).size===1, m.map(x=>x.capsule).join(','));
+
+  const mates=g.capsuleMates(m[0]);
+  check('each one remembers the other two', mates.length===2, mates.length);
+  check('...by name',
+        mates.map(x=>x.name).sort().join(',')===crew.slice(1).sort().join(','),
+        mates.map(x=>x.name).join(','));
+  check('...and never itself',
+        !mates.some(x=>x.name===m[0].name), m[0].name);
+
+  // a later trip is a different capsule and a different set of companions
+  const cap2=g.beginCapsule();
+  const solo=g.makeHatchling('baby');
+  g.enrolHatchling(solo,'B',cap2);
+  const later=g.roster.members[3];
+  check('a later trip is its own capsule', later.capsule!==cap, later.capsule+' vs '+cap);
+  check('...and its passenger came out alone', g.capsuleMates(later).length===0,
+        g.capsuleMates(later).length);
+  check('...without joining anybody else\'s trip',
+        g.capsuleMates(m[0]).length===2, g.capsuleMates(m[0]).length);
+}
+
+// ── scenario 147: one rift, one capsule ─────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  // free every cage, then walk the whole train into the rift
+  for(const c of g.cages.slice()) g.breakCage(c);
+  const aboard=g.followers.filter(f=>f.rec).length;
+  check('the train is carrying somebody', aboard>=2, aboard);
+
+  g.endLevel();
+  const home=g.roster.members;
+  check('everybody aboard got home', home.length===aboard,
+        home.length+' of '+aboard);
+  check('and they all share one capsule',
+        new Set(home.map(x=>x.capsule)).size===1,
+        home.map(x=>x.capsule).join(','));
+  check('so each remembers the others', g.capsuleMates(home[0]).length===aboard-1,
+        g.capsuleMates(home[0]).length);
+
+  // a second trip must not join the first
+  g.loadLevel(0);
+  step(2);
+  g.breakCage(g.cages[0]);
+  g.endLevel();
+  const last=g.roster.members[g.roster.members.length-1];
+  check('the next trip is a new capsule',
+        last.capsule!==home[0].capsule, last.capsule+' vs '+home[0].capsule);
+  check('...and does not gatecrash the first',
+        g.capsuleMates(home[0]).length===aboard-1,
+        g.capsuleMates(home[0]).length);
+  check('...nor claim the veterans as its own',
+        g.capsuleMates(last).length===0, g.capsuleMates(last).length);
+}
+
+// ── scenario 148: the fact lives in one place ───────────────
+{
+  const {g,step,store}=run({map:true});
+  const cap=g.beginCapsule();
+  for(let i=0;i<2;i++) g.enrolHatchling(g.makeHatchling('baby'),'A',cap);
+  const [a,b]=g.roster.members;
+  check('they know each other', g.capsuleMates(a)[0].name===b.name,
+        g.capsuleMates(a)[0].name);
+  check('...both ways', g.capsuleMates(b)[0].name===a.name,
+        g.capsuleMates(b)[0].name);
+  // derived, not copied: nothing on the record names anybody else, so the
+  // two halves of the fact cannot drift apart
+  check('no record carries a copy of the other name',
+        JSON.stringify(a).indexOf(b.name)<0, JSON.stringify(a));
+
+  // and it survives the store, which is where it has to be for the web to
+  // still be there tomorrow
+  const saved=JSON.parse(store.getItem('neonDinoRoster'));
+  check('the capsule id is written down',
+        saved.members.every(x=>typeof x.capsule==='number'),
+        JSON.stringify(saved.members.map(x=>x.capsule)));
+  check('...and both halves share it',
+        saved.members[0].capsule===saved.members[1].capsule,
+        saved.members.map(x=>x.capsule).join(','));
+  check('...and the next id is kept too', typeof saved.nextCapsule==='number',
+        saved.nextCapsule);
+  g.drawBrood();
+  check('the card renders the companions', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
