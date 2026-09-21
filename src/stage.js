@@ -42,6 +42,7 @@ function finishWorld(){
   mapStampWorld=worldIndex; mapStampTimer=2.4; mapSel=worldIndex;
   const anyLeft=WORLDS.some((w,i)=>w.levels.length&&!worldState(i).cleared);
   if(!anyLeft){ STATE="win"; stateTimer=0; return; }
+  arcDebrief();
   STATE="map"; stateTimer=0;
   playPowerUp();
 }
@@ -528,7 +529,5 @@ function loadLevel(i){
   checkpointUsed=false;
   warpTimer=0;   // portalReveal is set by initBoss(), which ran just above
   recordPlayerTrail();
-  queueRadio("start","KOMUTA MERKEZİ",
-    ["DİKKAT: Volkan patlıyor!","Kafesleri kır ve rehineleri topla!"],
-    {color:"#ff8844",urgent:true,hold:4.2});
+  arcBrief();
 }

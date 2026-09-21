@@ -98,6 +98,9 @@ function openSecretChest(){
   queueRadio(null,"KOMUTA MERKEZİ",
     ["Gizli sandık açıldı!","Enerji kalkanı devrede."],
     {color:"#ffdd44",hold:2.6});
+  // ...and then somebody else does. The chest is the only place in the game
+  // the archive gets a word in, which is why it is behind a detour.
+  arcLog();
 }
 
 function updateSecrets(dt){

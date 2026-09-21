@@ -294,6 +294,14 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  get arcSeen(){return arcSeen;},
+  get ARC_BRIEF(){return ARC_BRIEF;}, get ARC_STAGE(){return ARC_STAGE;},
+  get ARC_LOG(){return ARC_LOG;}, get ARC_DEBRIEF(){return ARC_DEBRIEF;},
+  get ARC_COMMAND(){return ARC_COMMAND;}, get ARC_ARCHIVE(){return ARC_ARCHIVE;},
+  arcBrief:()=>arcBrief(), arcLog:()=>arcLog(), arcDebrief:()=>arcDebrief(),
+  arcEnding:()=>arcEnding(), arcFragments:()=>arcFragments(),
+  arcFragmentsTotal:()=>arcFragmentsTotal(),
+  drawArcEnding:(y)=>drawArcEnding(y),
   get secretKey(){return secretKey;},
   get secretChest(){return secretChest;},
   get secretSeals(){return secretSeals;},
@@ -434,8 +442,10 @@ function runSuite(){
   const {g,step}=run();
   check('entering a world starts it playing', g.STATE==='playing', g.STATE);
   check('stage-open transmission is on the air', !!g.radio && g.radioFired.start===true);
-  check('opening transmission carries the eruption warning',
-        !!g.radio && g.radio.lines[0].indexOf('Volkan patlıyor')>=0, g.radio&&g.radio.lines[0]);
+  check('opening transmission is the volcano briefing',
+        !!g.radio && g.radio.lines[0].indexOf('Volkan')>=0, g.radio&&g.radio.lines[0]);
+  check('...and it comes from Command', !!g.radio && g.radio.title==='KOMUTA MERKEZİ',
+        g.radio&&g.radio.title);
   check('three cages in stage 1', g.cages.length===3, g.cages.length);
   step(120);   // ~2s of real frames, radio open→type→hold
   check('no crash over 120 frames', true);
@@ -4740,6 +4750,141 @@ function runSuite(){
   for(let i=0;i<4 && g.vineGrab;i++) step(1);
   keys({Space:false});
   check('jump still releases it', g.vineGrab===null);
+}
+
+// ── scenario 124: two voices, and only one of them lies ─────
+{
+  const {g}=run({map:true});
+  check('Command has a name', g.ARC_COMMAND==='KOMUTA MERKEZİ', g.ARC_COMMAND);
+  check('...and so does the archive', !!g.ARC_ARCHIVE && g.ARC_ARCHIVE!==g.ARC_COMMAND,
+        g.ARC_ARCHIVE);
+
+  // every line in the arc is hand-wrapped: the radio window does no text
+  // measuring, so a long line simply runs out of it
+  const every=[];
+  for(const tbl of [g.ARC_BRIEF,g.ARC_STAGE,g.ARC_LOG,g.ARC_DEBRIEF])
+    for(const k of Object.keys(tbl)) every.push([k,tbl[k]]);
+  check('the arc has something to say', every.length>=10, every.length);
+  const tooLong=every.filter(([k,ls])=>ls.some(l=>l.length>40))
+                     .map(([k,ls])=>k+':'+Math.max(...ls.map(l=>l.length)));
+  check('every arc line fits the comms window', tooLong.length===0,
+        tooLong.join(' '));
+  const tooMany=every.filter(([k,ls])=>ls.length>3).map(([k])=>k);
+  check('...and no beat is taller than the window', tooMany.length===0,
+        tooMany.join(' '));
+
+  // each playable biome gets its own words, not a shared one
+  for(const id of ['volcano','forest','frozen']){
+    check(id+' has a briefing of its own', !!g.ARC_BRIEF[id], id);
+    check(id+' has a log of its own', !!g.ARC_LOG[id], id);
+  }
+  const briefs=['volcano','forest','frozen'].map(i=>g.ARC_BRIEF[i].join('|'));
+  check('the three briefings are different', new Set(briefs).size===3,
+        briefs.join(' // '));
+}
+
+// ── scenario 125: the briefing lands on the right stage ─────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(2);
+  check('the first stage of a world is briefed',
+        !!g.radio && g.radio.lines[0]===g.ARC_BRIEF.volcano[0],
+        g.radio&&g.radio.lines[0]);
+
+  // the SECOND stage gets the filler line, not the briefing again
+  g.radio=null; g.radioQueue.length=0;
+  g.loadLevel(g.WORLDS[0].levels[1]);
+  step(2);
+  check('a later stage still opens with a transmission', !!g.radio, g.radio);
+  check('...but not the briefing twice',
+        !!g.radio && g.radio.lines[0]!==g.ARC_BRIEF.volcano[0],
+        g.radio&&g.radio.lines[0]);
+  check('...it is the filler line', !!g.radio && g.radio.lines[0]===g.ARC_STAGE.volcano[0],
+        g.radio&&g.radio.lines[0]);
+}
+
+// ── scenario 126: the archive only speaks from a chest ──────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.radio=null; g.radioQueue.length=0;
+
+  // play the whole stage without touching the chest: the archive stays shut
+  for(let i=0;i<120;i++){ g.player.invuln=999; g.player.hp=99; step(1); }
+  const heard=[g.radio].concat(g.radioQueue).filter(Boolean).map(r=>r.title);
+  check('the archive says nothing on its own',
+        !heard.includes(g.ARC_ARCHIVE), heard.join(','));
+
+  // now open it
+  g.radio=null; g.radioQueue.length=0;
+  const k=g.secretKey;
+  for(let i=0;i<8 && !g.keyHeld();i++){
+    g.player.x=k.x-g.PLAYER_W/2; g.player.y=k.y-g.PLAYER_H;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999;
+    step(1);
+  }
+  const c=g.secretChest;
+  for(let i=0;i<20 && !g.secretChest.open;i++){
+    g.player.x=c.x; g.player.y=c.y-g.PLAYER_H+20;
+    g.player.vx=0; g.player.vy=0; g.player.invuln=999; g.player.hp=99;
+    step(1);
+  }
+  check('the chest was opened', g.secretChest.open===true);
+  const after=[g.radio].concat(g.radioQueue).filter(Boolean);
+  check('the archive speaks from inside the chest',
+        after.some(r=>r.title===g.ARC_ARCHIVE),
+        after.map(r=>r.title).join(','));
+  const log=after.filter(r=>r.title===g.ARC_ARCHIVE)[0];
+  check('...and it is the volcano record',
+        !!log && log.lines[0]===g.ARC_LOG.volcano[0],
+        log&&log.lines[0]);
+  check('...and it contradicts nobody out loud',
+        !!log && log.title!==g.ARC_COMMAND);
+}
+
+// ── scenario 127: the ending is what you did ────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(2);
+  const total=g.arcFragmentsTotal();
+  check('there are three records to find', total===3, total);
+  check('none are found yet', g.arcFragments()===0, g.arcFragments());
+
+  const cold=g.arcEnding();
+  check('finding nothing ends it coldly', cold.id==='protocol', cold.id);
+
+  // one record: doubt
+  g.secretSeals['stage0_key']=true;
+  const doubt=g.arcEnding();
+  check('one record is enough to doubt', doubt.id==='doubt', doubt.id);
+  check('...and it reads differently', doubt.title!==cold.title,
+        cold.title+' vs '+doubt.title);
+
+  // all of them: the way out
+  g.secretSeals['stage3_key']=true;
+  g.secretSeals['stage7_key']=true;
+  check('all three found', g.arcFragments()===total, g.arcFragments());
+  const out=g.arcEnding();
+  check('the whole archive changes the ending', out.id==='escape', out.id);
+  check('...and the three endings are three different endings',
+        new Set([cold.id,doubt.id,out.id]).size===3,
+        [cold.id,doubt.id,out.id].join(','));
+
+  // the ending text has to fit the screen it is drawn on
+  for(const e of [cold,doubt,out]){
+    check(e.id+' fits on the victory screen',
+          e.lines.length<=6 && e.lines.every(l=>l.length<=46),
+          e.lines.length+' lines, longest '+Math.max(...e.lines.map(l=>l.length)));
+  }
+  g.drawArcEnding(300);
+  check('the ending renders', true);
+  g.drawWin();
+  check('the victory screen renders with it', true);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

@@ -801,9 +801,10 @@ function drawWin(){
     drawBaby(sx,H/2-14+Math.sin(t*4+i)*3,30,1);
   }
 
-  ctx.font="22px 'Courier New',monospace";
+  ctx.font="18px 'Courier New',monospace";
   ctx.fillStyle="#ffdd44";
-  ctx.fillText("FINAL SCORE: "+score.toLocaleString(),W/2,H/2+30);
+  ctx.fillText("FINAL SCORE: "+score.toLocaleString(),W/2,H/2+26);
+  drawArcEnding(H/2+58);
   if(newRecord){
     const pulse=0.6+0.4*Math.sin(t*10);
     glow("#ffee00",10+10*pulse);
