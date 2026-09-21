@@ -41,6 +41,7 @@ function update(dt){
     }
     mapKeyWasDown=anyDir;
     if(K["KeyH"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyH"]=false; openHangar(); return; }
+    if(K["KeyB"]&&stateTimer>0.25&&mapStampTimer<=0){ K["KeyB"]=false; openBrood(); return; }
     if(K["Enter"]&&stateTimer>0.25&&mapStampTimer<=0){
       if(startWorld(mapSel)) return;
     }
@@ -49,6 +50,8 @@ function update(dt){
 
   // between missions: spending what the last one paid
   if(STATE==="hangar"){ updateHangar(dt); return; }
+  // ...and looking at who it was all for
+  if(STATE==="brood"){ updateBrood(dt); return; }
 
   // credit clock: ENTER spends one, R gives up, zero means it is really over
   if(STATE==="continue"){
@@ -1729,6 +1732,7 @@ function endLevel(){
     spawnParticles(f.x-camX,f.y,10,["#ffdd88","#8effc9","#ffffff"],
       {minSpd:40,maxSpd:160,minLife:0.3,maxLife:0.8,type:"square",gravity:-40,minSz:2,maxSz:5});
   }
+  const boarded=followers.slice();
   followers=[];
 
   spawnParticles(W/2,H/2,30,["#00ff88","#ffee44","#ffffff","#44aaff"],
@@ -1740,6 +1744,16 @@ function endLevel(){
   lastGradeIsBest=recordGrade(grade.letter);
   // the pouch is only safe once the squad is through the rift
   bankStageClear(grade.letter);
+
+  // ...and so is the brood. They are enrolled with the seniority they were
+  // rescued WITH — how well you did it, not how long it took, because time
+  // served is farmable and a grade is not.
+  lastEnrolled=[];
+  for(const f of boarded){
+    if(!f.rec) continue;
+    enrolHatchling(f.rec,grade.letter);
+    lastEnrolled.push(f.rec);
+  }
 
   // the world's final score is locked in here, before the debrief plays, so
   // the victory screen never re-runs the high-score check

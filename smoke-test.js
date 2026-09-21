@@ -272,6 +272,24 @@ function run(opts){
   get coins(){return coins;},
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
+  get roster(){return roster;},
+  get ROLES(){return ROLES;}, get ROLE_IDS(){return ROLE_IDS;},
+  get HATCH_NAMES(){return HATCH_NAMES;},
+  makeHatchling:(sp)=>makeHatchling(sp),
+  enrolHatchling:(r,l)=>enrolHatchling(r,l),
+  loseHatchling:(r)=>loseHatchling(r),
+  broodTier:(id)=>broodTier(id),
+  broodWeight:(id)=>broodWeight(id),
+  rankForGrade:(l)=>rankForGrade(l),
+  followerPower:()=>followerPower(),
+  get lastEnrolled(){return lastEnrolled;}, set lastEnrolled(v){lastEnrolled=v;},
+  get lastLostName(){return lastLostName;}, set lastLostName(v){lastLostName=v;},
+  openBrood:()=>openBrood(), closeBrood:()=>closeBrood(),
+  updateBrood:(dt)=>updateBrood(dt), drawBrood:()=>drawBrood(),
+  broodBackButton:()=>broodBackButton(), mapBroodButton:()=>mapBroodButton(),
+  panicFollower:(i)=>panicFollower(i),
+  recaptureBaby:(b)=>recaptureBaby(b),
+  loseBaby:(b,si)=>loseBaby(b,si),
   get UPGRADES(){return UPGRADES;},
   upgradeLevel:(id)=>upgradeLevel(id),
   upgradeCost:(id)=>upgradeCost(id),
@@ -3991,6 +4009,241 @@ function runSuite(){
         JSON.stringify(g.COIN_VALUE));
   check('...and far less than delivering a hatchling', g.RESCUE_VALUE>=10,
         g.RESCUE_VALUE);
+}
+
+// ── scenario 102: every cage holds somebody ─────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  check('the brood starts empty', g.roster.members.length===0, g.roster.members.length);
+
+  const rec=g.makeHatchling('baby');
+  check('a hatchling has a name', typeof rec.name==='string' && rec.name.length>0, rec.name);
+  check('...a role from the roster', g.ROLE_IDS.includes(rec.role), rec.role);
+  check('...and is not home yet', rec.home===false);
+  check('...nor counted before it arrives', g.roster.members.length===0);
+
+  // names must not repeat, or losing one of two PATİs means nothing
+  const many=[];
+  for(let i=0;i<12;i++){ const r=g.makeHatchling('baby'); g.enrolHatchling(r,'D'); many.push(r.name); }
+  check('names do not repeat inside the brood',
+        new Set(many).size===many.length, many.join(' '));
+  check('ids do not repeat either',
+        new Set(g.roster.members.map(m=>m.id)).size===g.roster.members.length);
+}
+
+// ── scenario 103: freeing a cage names the occupant ─────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const cage=g.cages[0];
+  check('there is a cage', !!cage);
+  g.breakCage(cage);
+  check('the train gained a hatchling', g.followers.length===1, g.followers.length);
+  const f=g.followers[0];
+  check('...and it is somebody', !!f.rec && !!f.rec.name, f.rec&&f.rec.name);
+  check('...who is not home yet', f.rec.home===false);
+  check('...and the brood has not grown', g.roster.members.length===0);
+  g.drawFollowers();
+  check('the train draws its name tags', true);
+}
+
+// ── scenario 104: the rift is what makes it permanent ───────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const rec=g.makeHatchling('baby');
+  check('nothing is stored yet', store.getItem('neonDinoRoster')===null);
+
+  g.enrolHatchling(rec,'A');
+  check('delivering enrols it', g.roster.members.length===1, g.roster.members.length);
+  check('...and it knows it is home', rec.home===true);
+  // asserting on the array alone would pass with the save deleted
+  const saved=JSON.parse(store.getItem('neonDinoRoster'));
+  check('...and it is written to the store', saved.members.length===1,
+        store.getItem('neonDinoRoster'));
+  check('...with the name intact', saved.members[0].name===rec.name,
+        saved.members[0].name+' vs '+rec.name);
+
+  // enrolling the same individual twice must not clone it
+  g.enrolHatchling(rec,'A');
+  check('the same hatchling cannot arrive twice', g.roster.members.length===1,
+        g.roster.members.length);
+}
+
+// ── scenario 105: seniority comes from the grade ────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(3);
+  const rankOf=(letter)=>{ const r=g.makeHatchling('baby'); g.enrolHatchling(r,letter); return r.rank; };
+  const s_=rankOf('S'), a_=rankOf('A'), b_=rankOf('B'), c_=rankOf('C'), d_=rankOf('D');
+  check('an S delivers a seasoned hatchling', s_>d_, 'S:'+s_+' D:'+d_);
+  check('...and a B beats a D too', b_>d_, 'B:'+b_+' D:'+d_);
+  check('the ladder never goes backwards',
+        s_>=a_ && a_>=b_ && b_>=c_ && c_>=d_,
+        [s_,a_,b_,c_,d_].join(','));
+  check('every rank is a real one', [s_,a_,b_,c_,d_].every(r=>r>=1&&r<=3),
+        [s_,a_,b_,c_,d_].join(','));
+}
+
+// ── scenario 106: a loss is a name that never arrives ───────
+{
+  const {g,step,store}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  const cage=g.cages[0];
+  g.breakCage(cage);
+  const f=g.followers[0];
+  const name=f.rec.name;
+
+  // scare it off and let the window run out
+  g.panicFollower(0);
+  check('it broke away', g.scaredBabies.length===1, g.scaredBabies.length);
+  check('...still carrying its name', g.scaredBabies[0].rec &&
+        g.scaredBabies[0].rec.name===name, name);
+  const before=g.roster.lost;
+  g.loseBaby(g.scaredBabies[0],false);
+  check('losing it is counted', g.roster.lost===before+1, g.roster.lost);
+  check('...it never reaches the brood', g.roster.members.length===0);
+  check('...and the debrief is told who', g.lastLostName===name,
+        g.lastLostName+' vs '+name);
+  check('...the loss is persisted', JSON.parse(store.getItem('neonDinoRoster')).lost===before+1);
+}
+
+// ── scenario 107: catching it back keeps who it was ─────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.breakCage(g.cages[0]);
+  const name=g.followers[0].rec.name;
+  g.panicFollower(0);
+  const stray=g.scaredBabies[0];
+  g.recaptureBaby(stray);
+  check('it is back on the train', g.followers.length===1, g.followers.length);
+  check('...and it is the same hatchling', g.followers[0].rec &&
+        g.followers[0].rec.name===name,
+        (g.followers[0].rec||{}).name+' vs '+name);
+}
+
+// ── scenario 108: the brood trains the escort ───────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  // with an empty brood the escort must behave exactly as it always did
+  const stock=(n)=>{
+    g.roster.members.length=0;
+    g.followers.length=0;
+    for(let i=0;i<n;i++) g.followers.push({x:0,y:0,bob:0,facing:1,species:'baby'});
+    return g.followerPower();
+  };
+  check('no brood, no escort, no bonus', stock(0).beamMult===1, stock(0).beamMult);
+  check('one hatchling still ticks the beam faster', stock(1).beamMult===0.78,
+        stock(1).beamMult);
+  check('two still refuel', stock(2).fuelMult===1.9, stock(2).fuelMult);
+  check('three still open fire', stock(3).shooting===true);
+  check('...and two do not, with no brood behind them', stock(2).shooting===false);
+
+  // a gunner brood sharpens the beam line
+  const beam2=stock(2).beamMult;
+  g.roster.members.length=0;
+  for(let i=0;i<4;i++) g.roster.members.push({id:i,name:'G'+i,role:'gunner',rank:3});
+  g.followers.length=0;
+  for(let i=0;i<2;i++) g.followers.push({x:0,y:0,bob:0,facing:1,species:'baby'});
+  check('a gunner brood is a tier', g.broodTier('gunner')>0, g.broodTier('gunner'));
+  check('...and it sharpens the beam', g.followerPower().beamMult<beam2,
+        beam2+' -> '+g.followerPower().beamMult);
+
+  // a guard brood lets two open fire
+  g.roster.members.length=0;
+  for(let i=0;i<4;i++) g.roster.members.push({id:i,name:'K'+i,role:'guard',rank:3});
+  check('a guard brood opens fire one hatchling early',
+        g.followerPower().shooting===true, g.followerPower().shooting);
+
+  // a tech brood refuels harder
+  g.roster.members.length=0;
+  for(let i=0;i<4;i++) g.roster.members.push({id:i,name:'T'+i,role:'tech',rank:3});
+  check('a tech brood refuels harder', g.followerPower().fuelMult>1.9,
+        g.followerPower().fuelMult);
+
+  // none of it works with nobody in the train: the brood trains an escort,
+  // it does not replace one
+  g.followers.length=0;
+  const empty=g.followerPower();
+  check('an empty train gets nothing from the brood',
+        empty.beamMult===1 && empty.fuelMult===1 && empty.shooting===false,
+        JSON.stringify(empty));
+}
+
+// ── scenario 109: the brood bonus saturates ─────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(3);
+  g.followers.length=0;
+  for(let i=0;i<3;i++) g.followers.push({x:0,y:0,bob:0,facing:1,species:'baby'});
+
+  const withBrood=(n)=>{
+    g.roster.members.length=0;
+    for(let i=0;i<n;i++) g.roster.members.push({id:i,name:'X'+i,role:'gunner',rank:3});
+    return g.followerPower();
+  };
+  const small=withBrood(5), huge=withBrood(400);
+  check('a huge brood is not a huge bonus', huge.beamMult===small.beamMult,
+        small.beamMult+' vs '+huge.beamMult);
+  check('the tier is capped', g.broodTier('gunner')<=3, g.broodTier('gunner'));
+  check('...and the beam never turns into an instant kill',
+        huge.beamMult>0.4, huge.beamMult);
+  check('the fuel bonus is bounded too', withBrood(400).fuelMult<4,
+        withBrood(400).fuelMult);
+}
+
+// ── scenario 110: the wall of names ─────────────────────────
+{
+  const {g,step,keys,click}=run({map:true});
+  check('the map is where it starts', g.STATE==='map');
+  g.drawWorldMap();
+  check('the map draws the way to the brood', true);
+
+  keys({KeyB:true});
+  step(30);
+  keys({KeyB:false});
+  check('B opens the brood screen', g.STATE==='brood', g.STATE);
+  g.drawBrood();
+  check('an empty brood still renders', true);
+
+  // fill it and draw again
+  for(let i=0;i<25;i++)
+    g.roster.members.push({id:100+i,name:'AD'+i,role:g.ROLE_IDS[i%3],rank:(i%3)+1});
+  g.drawBrood();
+  check('a full brood renders', true);
+  keys({ArrowDown:true}); g.updateBrood(0.5); keys({ArrowDown:false});
+  g.drawBrood();
+  check('...and scrolls', true);
+
+  keys({Escape:true}); g.updateBrood(0.016); keys({Escape:false});
+  check('escape goes back to the map', g.STATE==='map', g.STATE);
+
+  // and the tablet way in and out
+  g.touchMode=true;
+  const bb=g.mapBroodButton();
+  click(bb.x+bb.w/2,bb.y+bb.h/2);
+  check('tapping SOY opens it', g.STATE==='brood', g.STATE);
+  const back=g.broodBackButton();
+  click(back.x+back.w/2,back.y+back.h/2);
+  check('tapping HARİTA leaves it', g.STATE==='map', g.STATE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

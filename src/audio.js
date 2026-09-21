@@ -31,6 +31,12 @@ window.addEventListener("pointerdown", ev=>{
     if(touchMode) touchPressAt(ev.pointerId===undefined?0:ev.pointerId,p);
     return;
   }
+  // the brood roster: the only thing to tap is the way out
+  if(STATE==="brood"){
+    const b=broodBackButton();
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h) closeBrood();
+    return;
+  }
   // the hangar: tap a row to buy it, or the button to leave
   if(STATE==="hangar"){
     const b=hangarBackButton();
@@ -48,6 +54,8 @@ window.addEventListener("pointerdown", ev=>{
     if(mapStampTimer>0) return;
     const hb=mapHangarButton();
     if(p.x>=hb.x&&p.x<=hb.x+hb.w&&p.y>=hb.y&&p.y<=hb.y+hb.h){ openHangar(); return; }
+    const bb=mapBroodButton();
+    if(p.x>=bb.x&&p.x<=bb.x+bb.w&&p.y>=bb.y&&p.y<=bb.y+bb.h){ openBrood(); return; }
     for(let i=0;i<WORLDS.length;i++){
       const nx=WORLDS[i].mx*W, ny=WORLDS[i].my*H;
       if(Math.hypot(p.x-nx,p.y-ny)>38) continue;

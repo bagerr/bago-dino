@@ -387,7 +387,7 @@ function drawMissionReport(){
   ctx.fillRect(0,0,W,H);
   ctx.textAlign="center";
 
-  const bw=600,bh=372,bx=W/2-bw/2,by=H/2-bh/2;
+  const bw=600,bh=396,bx=W/2-bw/2,by=H/2-bh/2;
   ctx.globalAlpha=fade;
   ctx.fillStyle="rgba(4,8,12,0.92)"; ctx.fillRect(bx,by,bw,bh);
   ctx.shadowColor="#00ff88"; ctx.shadowBlur=18;
@@ -452,6 +452,19 @@ function drawMissionReport(){
            by+256,"bold 14px 'Courier New',monospace",
            rescuedThisLevel>=total?"#8effc9":"#ffcc66",0);
 
+  // Who came home and who did not, in one line: it is one fact about the
+  // mission, and the card has a hard budget — every line costs typing time
+  // against REPORT_AUTO.
+  const homeNames=(lastEnrolled||[]).map(r=>r.name);
+  if(homeNames.length||lastLostName){
+    const parts=[];
+    if(homeNames.length) parts.push("ÜSSE: "+homeNames.join(" "));
+    if(lastLostName) parts.push("KAYIP: "+lastLostName);
+    typeLine(parts.join("  ·  "),by+276,
+             "bold 12px 'Courier New',monospace",
+             lastLostName?"#ff5577":"#8effc9",lastLostName?8:0);
+  }
+
   // ── the payout, which is the part that outlives the run ──
   // bankStageClear() has already run by the time this draws, so lastPayout
   // is the real banked figure and not a second calculation that could drift
@@ -460,16 +473,16 @@ function drawMissionReport(){
   if(pay){
     typeLine("KAZANÇ: "+pay.coins+" KESE + "+pay.rescue+" KURTARMA"+
              "  x"+pay.mult.toFixed(1)+" = "+pay.scaled+" ¢",
-             by+286,"bold 14px 'Courier New',monospace","#ffcc55",0);
+             by+300,"bold 14px 'Courier New',monospace","#ffcc55",0);
     if(pay.firstTime){
       typeLine("★ İLK GEÇİŞ BONUSU: +"+pay.first+" ¢",
-               by+308,"bold 14px 'Courier New',monospace","#8effc9",8);
+               by+322,"bold 14px 'Courier New',monospace","#8effc9",8);
     }
     typeLine("KASA: "+bank.coins.toLocaleString()+" ¢",
-             by+(pay.firstTime?334:320),"bold 18px 'Courier New',monospace","#ffdd44",10);
+             by+(pay.firstTime?346:332),"bold 18px 'Courier New',monospace","#ffdd44",10);
   }
 
-  const nextY=by+(pay&&pay.firstTime?358:344);
+  const nextY=by+(pay&&pay.firstTime?372:358);
   if(isFinal){
     typeLine("SON BÖLÜM TAMAMLANDI",nextY,"bold 18px 'Courier New',monospace","#e879f9",10);
   } else {
@@ -673,6 +686,21 @@ function drawWorldMap(){
   ctx.font="bold 9px 'Courier New',monospace";
   ctx.fillStyle="#66708c";
   ctx.fillText(touchMode?"DOKUN":"H",hb.x+hb.w/2,hb.y+30);
+
+  // ...and the way to the brood, above it
+  const bb=mapBroodButton();
+  const any=roster.members.length>0;
+  ctx.fillStyle=any?'rgba(142,255,201,0.10)':'rgba(255,255,255,0.05)';
+  ctx.fillRect(bb.x,bb.y,bb.w,bb.h);
+  ctx.strokeStyle=any?'#8effc9':'#55607c'; ctx.lineWidth=1;
+  ctx.strokeRect(bb.x+0.5,bb.y+0.5,bb.w-1,bb.h-1);
+  ctx.textAlign='center';
+  ctx.font="bold 13px 'Courier New',monospace";
+  ctx.fillStyle=any?'#8effc9':'#8899bb';
+  ctx.fillText('SOY  '+roster.members.length,bb.x+bb.w/2,bb.y+17);
+  ctx.font="bold 9px 'Courier New',monospace";
+  ctx.fillStyle='#66708c';
+  ctx.fillText(touchMode?'DOKUN':'B',bb.x+bb.w/2,bb.y+30);
 
   ctx.textAlign="center";
   ctx.font="bold 10px 'Courier New',monospace";

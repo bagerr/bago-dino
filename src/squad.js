@@ -22,6 +22,8 @@ let playerTrail=[];         // {x,y,t,facing}, world space, oldest first
 let scaredBabies=[];        // knocked off the train, running loose, losable
 let babyShots=[];           // fireballs spat by a full escort
 let rescuedThisLevel=0;
+let lastLostName="";          // who did not make it, for the debrief
+let lastEnrolled=[];          // who did, for the same card
 let rescuedTotal=0;
 
 // What the escort pays out. This is the whole point of the POW model: the
@@ -30,13 +32,23 @@ let rescuedTotal=0;
 //   1 → the beam ticks damage faster
 //   2 → the jetpack refuels faster
 //   3 → they start spitting fireballs at whatever is closest
+//
+// On top of that, the BROOD you have already delivered trains the ones you
+// are carrying: each role's tier sharpens its own line. The reward for
+// rescuing well is rescuing better, which keeps the progression inside the
+// loop instead of beside it — and every brood bonus saturates, so a large
+// brood cannot retire the escort mechanic.
 function followerPower(){
   const n=followers.length;
+  const gun=broodTier("gunner"), tech=broodTier("tech"), guard=broodTier("guard");
+  // a guard brood lets the escort open fire one hatchling early
+  const shootAt=guard>=1?2:3;
   return {
-    beamMult: n>=3 ? 0.62 : (n>=1 ? 0.78 : 1),  // multiplies the damage interval
-    fuelMult: n>=2 ? 1.9 : 1,
-    shooting: n>=3,
-    tier: n
+    beamMult: (n>=3 ? 0.62 : (n>=1 ? 0.78 : 1)) * (n>0 ? 1-0.05*gun : 1),
+    fuelMult: (n>=2 ? 1.9 : 1) + (n>0 ? 0.2*tech : 0),
+    shooting: n>=shootAt,
+    tier: n,
+    brood:{gunner:gun, tech:tech, guard:guard}
   };
 }
 
@@ -90,6 +102,7 @@ function panicFollower(idx){
   followers.splice(idx,1);
   scaredBabies.push({
     species:f.species||"baby",
+    rec:f.rec||null,
     x:f.x, y:f.y,
     vx:-player.facing*rnd(40,110)+rnd(-40,40), vy:-240,
     timer:PANIC_SECONDS, catchLock:CATCH_LOCK, bob:rnd(0,Math.PI*2), facing:f.facing
@@ -97,11 +110,12 @@ function panicFollower(idx){
   playBabyPanic();
   screenShake=Math.min(6,screenShake+3);
   hitStopTimer=Math.max(hitStopTimer,0.04);
-  spawnFloatingText(f.x-camX,f.y-22,"YAVRU PANİKTE!","#ff5577",13);
+  spawnFloatingText(f.x-camX,f.y-22,(f.rec?f.rec.name+" PANİKTE!":"YAVRU PANİKTE!"),"#ff5577",13);
   spawnParticles(f.x-camX,f.y,10,["#ffdd88","#ff5577","#ffffff"],
     {minSpd:60,maxSpd:180,minLife:0.2,maxLife:0.5,type:"circle",gravity:120});
   // null key = never deduped; this one has to be allowed to fire every time
-  queueRadio(null,"YAVRU DİNO",["Korktum, kaçıyorum!","Yakala beni!"],
+  queueRadio(null,(f.rec?f.rec.name:"YAVRU DİNO"),
+    ["Korktum, kaçıyorum!","Yakala beni!"],
     {color:"#ff5577",urgent:true,hold:2.2});
 }
 function recaptureBaby(b){
@@ -109,7 +123,8 @@ function recaptureBaby(b){
     const oldest=followers.shift();
     babyDinos.push({x:oldest.x,y:oldest.y,vx:player.facing*110,life:1.6});
   }
-  followers.push({x:b.x,y:b.y,bob:rnd(0,Math.PI*2),facing:player.facing,grace:REJOIN_GRACE,species:b.species||"baby"});
+  followers.push({x:b.x,y:b.y,bob:rnd(0,Math.PI*2),facing:player.facing,
+                  grace:REJOIN_GRACE,species:b.species||"baby",rec:b.rec||null});
   playChime(chain);
   spawnFloatingText(b.x-camX,b.y-20,"YAKALANDI!","#8effc9",14);
   spawnParticles(b.x-camX,b.y,12,["#8effc9","#ffdd88","#ffffff"],
@@ -120,12 +135,16 @@ function recaptureBaby(b){
 function loseBaby(b,silent){
   rescuedThisLevel=Math.max(0,rescuedThisLevel-1);
   rescuedTotal=Math.max(0,rescuedTotal-1);
+  // it never reaches base. The name is the whole point: a counter going down
+  // is arithmetic, a name that does not arrive is a loss.
+  if(b&&b.rec){ loseHatchling(b.rec); lastLostName=b.rec.name; }
   spawnParticles(b.x-camX,b.y,14,["#ff3355","#772233","#ffffff"],
     {minSpd:60,maxSpd:200,minLife:0.3,maxLife:0.7,type:"square",gravity:140});
   if(silent) return;
   playBabyLost();
-  spawnFloatingText(b.x-camX,b.y-20,"YAVRU KAYBEDİLDİ","#ff3355",15);
-  queueRadio(null,"KOMUTA MERKEZİ",["Bir yavru kayboldu.","Diğerlerini kaybetme!"],
+  const who=(b&&b.rec)?b.rec.name:"BİR YAVRU";
+  spawnFloatingText(b.x-camX,b.y-20,who+" KAYBEDİLDİ","#ff3355",15);
+  queueRadio(null,"KOMUTA MERKEZİ",[who+" kayboldu.","Diğerlerini kaybetme!"],
     {color:"#ff3355",urgent:true,hold:2.6});
 }
 function updateScaredBabies(dt){
@@ -278,6 +297,18 @@ function drawFollowers(){
     ctx.beginPath(); ctx.ellipse(fx,f.y+15,10,3,0,0,Math.PI*2); ctx.fill();
     ctx.globalAlpha=1; noGlow();
     drawBaby(fx,f.y-bob,28,f.facing,f.species);
+    // the name, small and in its role's colour. This is the whole change:
+    // you cannot lose a number by accident, but you can lose ÇAKIL.
+    if(f.rec){
+      ctx.save();
+      ctx.textAlign="center";
+      ctx.font="bold 9px 'Courier New',monospace";
+      ctx.globalAlpha=0.85;
+      ctx.fillStyle=roleColor(f.rec.role);
+      ctx.fillText(f.rec.name,fx,f.y-bob-26);
+      ctx.restore();
+      ctx.textAlign="left";
+    }
   }
 }
 
@@ -297,16 +328,17 @@ function breakCage(cage){
   // a thawed hostage runs as an ordinary hatchling — the frozen sheet is the
   // block it was trapped in, not a shape it keeps
   const carried=(cage.species==="frozen")?"baby":(cage.species||"baby");
+  const rec=makeHatchling(carried);
   followers.push({x:cage.x,y:cage.y,bob:rnd(0,Math.PI*2),facing:player.facing,
-                  grace:REJOIN_GRACE,species:carried,joy:0.9});
+                  grace:REJOIN_GRACE,species:carried,joy:0.9,rec:rec});
   const total=LEVELS[levelIndex].cages.length;
   if(rescuedThisLevel>=total){
     queueRadio("allsafe","KOMUTA MERKEZİ",
       ["Tüm soy kurtarıldı!","Tahliye portalına ilerle!"],{color:"#44ffcc",hold:3.2});
   } else {
-    queueRadio("rescue"+rescuedThisLevel,"YAVRU DİNO",
+    queueRadio("rescue"+rescuedThisLevel,rec.name,
       ["Kurtardın! Peşinden geliyorum!","Kalan kafes: "+(total-rescuedThisLevel)],
-      {color:"#ffcc44",hold:2.2});
+      {color:roleColor(rec.role),hold:2.2});
   }
   // leaves behind a scattering of gold + a couple of fuel canisters
   for(let i=0;i<5;i++) spawnDrop(cage.x+rnd(-20,20),cage.y-10,"coin");
