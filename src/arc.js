@@ -196,6 +196,25 @@ function arcEnding(){
   };
 }
 
+// ── what the archive does to the wall of names ────────────────
+// Record 7 says the Alpha is the same lineage, only grown. Once every record
+// has been read, the brood screen stops being a list of rescues and starts
+// being a list of the same thing the bosses are — which is how a story told
+// in a radio window reaches back and changes something the player has been
+// looking at for hours.
+//
+// This reads what has EVER been found rather than what this run is carrying:
+// it is about what the player knows, and knowledge does not reset with a
+// playthrough the way the ending's evidence does.
+function archiveComplete(){
+  const total=arcFragmentsTotal();
+  return total>0 && arcFragmentsEver()>=total;
+}
+function broodSubtitle(){
+  return archiveComplete() ? "AYNI SOYDAN — ARŞİV DOĞRULADI"
+                           : "ÜSSE VARANLAR — KALICI";
+}
+
 // drawn under the victory screen's own tally
 function drawArcEnding(y){
   const e=arcEnding();

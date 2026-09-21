@@ -507,6 +507,7 @@ function loadLevel(i){
 
   initCoins(); initEnemies(); initGroundEnemies(); initVines(); initFog(); initIcicles(); initWind();
   initSecrets();
+  resetChatter();
   runCoins=0;   // the pouch is per stage: a continue costs it, and hands the coins back to collect again
   initPowerUpBoxes(); initWeaponPickups(); initCages(); initBoss();
 

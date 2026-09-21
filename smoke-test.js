@@ -298,6 +298,15 @@ function run(opts){
   get roster(){return roster;},
   beginCapsule:()=>beginCapsule(), capsuleMates:(m)=>capsuleMates(m),
   freshName:()=>freshName(),
+  roleColor:(r)=>roleColor(r), roleName:(r)=>roleName(r),
+  updateChatter:(dt)=>updateChatter(dt), resetChatter:()=>resetChatter(),
+  chatterFor:(r)=>chatterFor(r),
+  get chatterTimer(){return chatterTimer;}, set chatterTimer(v){chatterTimer=v;},
+  get CHATTER_MIN(){return CHATTER_MIN;}, get CHATTER_MAX(){return CHATTER_MAX;},
+  get CHATTER_ROLE(){return CHATTER_ROLE;}, get CHATTER_RANK(){return CHATTER_RANK;},
+  get CHATTER_FOG(){return CHATTER_FOG;}, get CHATTER_BOSS(){return CHATTER_BOSS;},
+  get CHATTER_HURT(){return CHATTER_HURT;},
+  get bossCardTimer(){return bossCardTimer;}, set bossCardTimer(v){bossCardTimer=v;},
   drawMapPlate:()=>drawMapPlate(), drawSonar:()=>drawSonar(),
   drawAmbientWalls:()=>drawAmbientWalls(), drawCRT:()=>drawCRT(),
   drawVignette:()=>drawVignette(), drawBiomeEmblem:(...a)=>drawBiomeEmblem(...a),
@@ -336,6 +345,7 @@ function run(opts){
   arcBrief:()=>arcBrief(), arcLog:()=>arcLog(), arcDebrief:()=>arcDebrief(),
   arcEnding:()=>arcEnding(), arcFragments:()=>arcFragments(),
   arcFragmentsEver:()=>arcFragmentsEver(),
+  archiveComplete:()=>archiveComplete(), broodSubtitle:()=>broodSubtitle(),
   get arcOpened(){return arcOpened;},
   get resetPrompt(){return resetPrompt;}, set resetPrompt(v){resetPrompt=v;},
   resetAll:()=>resetAll(), openResetPrompt:()=>openResetPrompt(),
@@ -5725,6 +5735,182 @@ function runSuite(){
         !names.includes(lost.name), lost.name+' reissued');
   check('...and the living do not repeat each other either',
         new Set(names).size===names.length, names.length-new Set(names).size);
+}
+
+// ── scenario 153: the escort has a voice ────────────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  // every line in the chatter has to fit the comms window, same as the rest
+  const every=[];
+  for(const tbl of [g.CHATTER_ROLE,g.CHATTER_RANK])
+    for(const k of Object.keys(tbl)) every.push([k,tbl[k]]);
+  every.push(['fog',g.CHATTER_FOG],['boss',g.CHATTER_BOSS],['hurt',g.CHATTER_HURT]);
+  const tooLong=every.filter(([k,ls])=>ls.some(l=>l.length>40)).map(([k])=>k);
+  check('every remark fits the window', tooLong.length===0, tooLong.join(' '));
+  check('each role has its own things to say',
+        Object.keys(g.CHATTER_ROLE).length>=3,
+        Object.keys(g.CHATTER_ROLE).join(','));
+  check('...and so does each rank',
+        Object.keys(g.CHATTER_RANK).length>=3,
+        Object.keys(g.CHATTER_RANK).join(','));
+
+  // an empty train says nothing, however long you wait
+  g.followers.length=0;
+  g.radio=null; g.radioQueue.length=0;
+  g.chatterTimer=0;
+  for(let i=0;i<120;i++) g.updateChatter(1/60);
+  check('nobody on the train, nobody talking',
+        !g.radio && g.radioQueue.length===0, g.radio&&g.radio.title);
+}
+
+// ── scenario 154: and it is the hatchling who speaks ────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.breakCage(g.cages[0]);
+  const rec=g.followers[0].rec;
+  check('somebody is aboard', !!rec, g.followers.length);
+
+  g.radio=null; g.radioQueue.length=0;
+  g.bossCardTimer=0;
+  g.chatterTimer=0;
+  g.updateChatter(1/60);
+  const said=g.radio||g.radioQueue[0];
+  check('it speaks', !!said, 'silent');
+  check('...in its own name', !!said && said.title===rec.name,
+        said&&said.title);
+  check('...and its own colour', !!said && said.color===g.roleColor(rec.role),
+        (said&&said.color)+' vs '+g.roleColor(rec.role));
+  check('...one line, short', !!said && said.lines.length===1 &&
+        said.lines[0].length<=40, said&&said.lines[0]);
+
+  // and then it is quiet for a while
+  check('the clock is reset', g.chatterTimer>=g.CHATTER_MIN-0.001,
+        g.chatterTimer);
+  g.radio=null; g.radioQueue.length=0;
+  for(let i=0;i<60;i++) g.updateChatter(1/60);
+  check('it does not chatter every frame',
+        !g.radio && g.radioQueue.length===0, g.radio&&g.radio.lines[0]);
+}
+
+// ── scenario 155: it remarks on what is happening ───────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(5);              // the rot rises here
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.breakCage(g.cages[0]);
+  const rec=g.followers[0].rec;
+  g.lastLostName='';
+
+  g.fogY=Infinity; g.windState='calm';
+  g.player.hp=99;
+  const calm=[];
+  for(let i=0;i<20;i++) calm.push(g.chatterFor(rec));
+  check('a quiet moment gets a quiet remark',
+        !calm.some(l=>g.CHATTER_FOG.includes(l)), calm.slice(0,3).join(' / '));
+
+  g.fogY=g.player.y+40;
+  const wet=[];
+  for(let i=0;i<20;i++) wet.push(g.chatterFor(rec));
+  check('the rot at your heels is what gets mentioned',
+        wet.every(l=>g.CHATTER_FOG.includes(l)), wet.slice(0,3).join(' / '));
+
+  g.fogY=Infinity; g.player.hp=1;
+  const hurt=[];
+  for(let i=0;i<20;i++) hurt.push(g.chatterFor(rec));
+  check('...and so is the state you are in',
+        hurt.every(l=>g.CHATTER_HURT.includes(l)), hurt.slice(0,3).join(' / '));
+
+  // the same mouth does not repeat itself back to back
+  g.player.hp=99; g.fogY=Infinity;
+  let repeats=0, prev=null;
+  for(let i=0;i<40;i++){
+    const l=g.chatterFor(rec);
+    if(l===prev) repeats++;
+    prev=l;
+  }
+  check('nobody says the same thing twice running', repeats===0, repeats);
+}
+
+// ── scenario 156: it never talks over anything ──────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+  g.breakCage(g.cages[0]);
+
+  // a transmission on the air keeps them quiet
+  g.radio=null; g.radioQueue.length=0;
+  g.queueRadio(null,'KOMUTA MERKEZİ',['Bir şey söylüyor.'],{hold:3});
+  const onAir=g.radio||g.radioQueue[0];
+  g.chatterTimer=0;
+  for(let i=0;i<30;i++) g.updateChatter(1/60);
+  const all=[g.radio].concat(g.radioQueue).filter(Boolean);
+  check('they wait while Command is talking',
+        all.length===1 && all[0]===onAir, all.map(r=>r.title).join(','));
+  check('...and the clock is pushed back', g.chatterTimer>0, g.chatterTimer);
+
+  // a boss card keeps them quiet too
+  g.radio=null; g.radioQueue.length=0;
+  g.bossCardTimer=2;
+  g.chatterTimer=0;
+  for(let i=0;i<30;i++) g.updateChatter(1/60);
+  check('they wait through a boss card',
+        !g.radio && g.radioQueue.length===0, g.radio&&g.radio.title);
+  g.bossCardTimer=0;
+
+  // and they say nothing at all outside a stage
+  g.STATE='report';
+  g.radio=null; g.radioQueue.length=0;
+  g.chatterTimer=0;
+  for(let i=0;i<60;i++) g.updateChatter(1/60);
+  check('nothing over the debrief',
+        !g.radio && g.radioQueue.length===0, g.radio&&g.radio.title);
+  g.STATE='playing';
+}
+
+// ── scenario 157: the archive relabels the wall ─────────────
+{
+  const {g,step}=run({map:true});
+  const total=g.arcFragmentsTotal();
+  check('there are records to read', total===3, total);
+  check('none read yet', g.archiveComplete()===false);
+  const before=g.broodSubtitle();
+  check('the wall is just a list of rescues', before.indexOf('ÜSSE')>=0, before);
+
+  // a partial archive changes nothing: the point is the WHOLE picture
+  g.secretSeals['stage0_key']=true;
+  check('one record is not the picture', g.archiveComplete()===false);
+  check('...and the wall still reads the same', g.broodSubtitle()===before,
+        g.broodSubtitle());
+  g.secretSeals['stage3_key']=true;
+  check('two is not either', g.archiveComplete()===false);
+
+  g.secretSeals['stage7_key']=true;
+  check('all three completes it', g.archiveComplete()===true);
+  const after=g.broodSubtitle();
+  check('...and the wall says something else', after!==before, before+' -> '+after);
+  check('...which is what record 7 said', after.indexOf('SOY')>=0, after);
+  g.drawBrood();
+  check('the relabelled wall renders', true);
+
+  // it reads what has EVER been found, not what this run carries: knowing
+  // does not un-happen when a new playthrough starts
+  g.arcOpened={};
+  check('a fresh run does not un-know it', g.archiveComplete()===true,
+        g.arcFragments()+' this run, '+g.arcFragmentsEver()+' ever');
 }
 
 // ── scenario 9: death screen untouched ────────────────────────

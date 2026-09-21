@@ -141,6 +141,7 @@ function update(dt){
   updateFog(dt);
   updateWind(dt);
   updateSecrets(dt);
+  updateChatter(dt);
   updateVines(dt,left,right,jump);
   // hanging from a vine suspends the dino's own physics entirely — the
   // pendulum owns its position until it lets go

@@ -190,7 +190,10 @@ function drawBrood(){
   noGlow();
   ctx.font="bold 11px 'Courier New',monospace";
   ctx.fillStyle="#7d99a0";
-  ctx.fillText("ÜSSE VARANLAR — KALICI",40,76);
+  // the archive reaches back: once every record has been read, the wall
+  // says something else about the same names
+  ctx.fillStyle=archiveComplete()?"#a78bfa":"#7d99a0";
+  ctx.fillText(broodSubtitle(),40,76);
 
   // the tally, including the one number nobody wants to grow
   ctx.textAlign="right";
