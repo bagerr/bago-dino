@@ -42,12 +42,16 @@ function saveBank(){
 
 // What each pickup is worth in credits. Deliberately flat and small: the
 // multipliers below are where a good run actually pays.
-const COIN_VALUE={coin:2, bosscoin:10, gem:1, crystal:1};
-const RESCUE_VALUE=15;         // per hatchling delivered
-const BROOD_BONUS=25;          // ...and again if none were left behind
-const FIRST_CLEAR_BONUS=120;   // once per stage, ever
+const COIN_VALUE={coin:3, bosscoin:16, gem:2, crystal:2};
+const RESCUE_VALUE=20;         // per hatchling delivered
+const BROOD_BONUS=35;          // ...and again if none were left behind
+const FIRST_CLEAR_BONUS=180;   // once per stage, ever
 const SALVAGE_FRAC=0.25;       // what a failed run still pays
-const GRADE_MULT={S:2.0, A:1.6, B:1.3, C:1.1, D:1.0};
+const GRADE_MULT={S:2.1, A:1.65, B:1.3, C:1.1, D:1.0};
+// A coin lying on the floor is still worth exactly 1 (see earnCoins at the
+// pickup site). Everything above it was raised and that was not, on purpose:
+// the floor coins are the farmable part of the economy, so inflating them is
+// the one change that would make re-running the easiest stage pay best.
 
 // coins picked up in the stage being played. Reset by loadLevel, so a
 // continue costs you the pouch and hands back the coins to collect again.

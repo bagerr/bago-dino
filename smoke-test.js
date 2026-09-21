@@ -226,7 +226,7 @@ function run(opts){
   drawCheckpoint:()=>drawCheckpoint(),
   followerPower:()=>followerPower(),
   drawScaredBabies:()=>drawScaredBabies(),
-  get rescuedThisLevel(){return rescuedThisLevel;},
+  get rescuedThisLevel(){return rescuedThisLevel;}, set rescuedThisLevel(v){rescuedThisLevel=v;},
   get rescuedTotal(){return rescuedTotal;},
   get cages(){return cages;}, get levelIndex(){return levelIndex;},
   get enemies(){return enemies;}, get groundEnemies(){return groundEnemies;},
@@ -3945,6 +3945,52 @@ function runSuite(){
   const b=g.hangarBackButton();
   click(b.x+b.w/2,b.y+b.h/2);
   check('tapping HARİTA leaves the hangar', g.STATE==='map', g.STATE);
+}
+
+// ── scenario 101: the economy stays in its band ─────────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(3);
+
+  const cheapest=Math.min(...g.UPGRADES.map(u=>u.costs[0]));
+  const catalogue=g.UPGRADES.reduce((s,u)=>s+u.costs.reduce((a,b)=>a+b,0),0);
+
+  // a good first clear: a full pouch, the whole brood out, an A
+  g.rescuedThisLevel=g.LEVELS[g.levelIndex].cages.length;
+  g.runCoins=40;
+  const good=g.computePayout('A').total;
+
+  check('a good stage is worth having', good>=cheapest*0.6,
+        good+' vs cheapest '+cheapest);
+  check('...but one stage does not buy the shop out', good<catalogue/6,
+        good+' vs catalogue '+catalogue);
+  check('...and it takes more than one run to afford the dearest thing',
+        good<Math.max(...g.UPGRADES.map(u=>u.costs[u.costs.length-1])),
+        good+' vs dearest '+Math.max(...g.UPGRADES.map(u=>u.costs[u.costs.length-1])));
+
+  // a bad run must not pay like a good one, or the grade stops meaning
+  // anything the moment the numbers are tuned
+  g.rescuedThisLevel=0; g.runCoins=40;
+  const bad=g.computePayout('D').total;
+  check('a bad clear pays much less than a good one', bad<good*0.6,
+        bad+' vs '+good);
+
+  // and a replay of a cleared stage has to stay the weakest option
+  g.bank.firstClear[g.levelIndex]=true;
+  g.rescuedThisLevel=g.LEVELS[g.levelIndex].cages.length;
+  g.runCoins=40;
+  const replay=g.computePayout('A').total;
+  check('a replay pays less than a first clear', replay<good, replay+' vs '+good);
+
+  // the floor coin is the farmable part: it must stay the cheapest credit in
+  // the game, or grinding the easiest stage becomes the best-paying play
+  check('a floor coin is worth less than a kill drop',
+        1<Math.min(...Object.values(g.COIN_VALUE)),
+        JSON.stringify(g.COIN_VALUE));
+  check('...and far less than delivering a hatchling', g.RESCUE_VALUE>=10,
+        g.RESCUE_VALUE);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
