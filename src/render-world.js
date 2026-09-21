@@ -35,8 +35,11 @@ function drawBiomeBG(){
   if(forestBgLoaded){
     const iw=forestBgSprite.naturalWidth, ih=forestBgSprite.naturalHeight;
     const dw=Math.max(1,iw*(H/ih));           // cover the canvas height
-    // slow scroll — the backdrop drifts at a fifth of the level's speed
-    const off=((-camX*0.2)%dw+dw)%dw;
+    // slow scroll — the backdrop drifts at a quarter of the level's speed.
+    // The offset is taken modulo one tile width and the loop starts one tile
+    // to the left, so the strip repeats forever with no seam and no gap however
+    // far the camera travels.
+    const off=((-camX*BG_PARALLAX)%dw+dw)%dw;
     for(let i=-1;i*dw-off<W;i++){
       const dx=i*dw-off;
       ctx.save();
@@ -55,7 +58,19 @@ function drawBiomeBG(){
   g.addColorStop(0.45,`rgba(${tint[2]},0.18)`);
   g.addColorStop(1,`rgba(${tint[3]},0.65)`);
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  if(TH.snow){
+  drawAtmosphere(TH);
+}
+
+// Each biome's air. This used to be "snow, or else spores", which meant the
+// volcano would have been breathing canopy spores the moment it got a
+// backdrop — so the biome names its own atmosphere and an unnamed one has
+// none. Particles live in SCREEN space (drawParticles applies no camX), and
+// this pass runs after the backdrop and before the platforms, so the motes
+// sit between the two.
+const BG_PARALLAX=0.25;
+function drawAtmosphere(TH){
+  const kind=TH.atmos||null;
+  if(kind==="snow"){
     // snowfall: slow, heavy flakes that drift sideways as they settle
     if(Math.random()<0.55) particles.push({
       x:rnd(-20,W+20), y:-8,
@@ -64,7 +79,7 @@ function drawBiomeBG(){
       color:Math.random()<0.6?"rgba(255,255,255,0.85)":"rgba(200,235,255,0.7)",
       size:rnd(1,3), type:"square", gravity:6
     });
-  } else {
+  } else if(kind==="spore"){
     // spore motes drifting through the canopy light
     if(Math.random()<0.25) particles.push({
       x:rnd(0,W), y:rnd(40,H-120),
@@ -72,6 +87,25 @@ function drawBiomeBG(){
       life:1, maxLife:rnd(1.6,3.2),
       color:Math.random()<0.5?"rgba(110,231,183,0.55)":"rgba(52,211,153,0.4)",
       size:rnd(1,3), type:"circle", gravity:-3
+    });
+  } else if(kind==="ash"){
+    // ash and sparks lifting off the floor on the heat. Negative gravity is
+    // the updraft: they rise and slow rather than falling.
+    if(Math.random()<0.45) particles.push({
+      x:rnd(-10,W+10), y:rnd(H-60,H+10),
+      vx:rnd(-14,14), vy:-rnd(14,42),
+      life:1, maxLife:rnd(2.0,4.0),
+      color:Math.random()<0.45?"rgba(255,136,0,0.75)"
+           :(Math.random()<0.6?"rgba(255,80,20,0.55)":"rgba(120,60,40,0.5)"),
+      size:rnd(1,3), type:"square", gravity:-8
+    });
+    // the odd bright ember, rarer and hotter
+    if(Math.random()<0.07) particles.push({
+      x:rnd(0,W), y:rnd(H-120,H),
+      vx:rnd(-20,20), vy:-rnd(30,70),
+      life:1, maxLife:rnd(0.8,1.8),
+      color:"rgba(255,204,0,0.9)",
+      size:rnd(1,2), type:"circle", gravity:-14
     });
   }
 }

@@ -100,16 +100,21 @@ Two rules the script follows and you should keep:
   the icicle's source rect), so rescaling them silently moves the walking
   surface off the collision line.
 - Everything else is only ever drawn small, so sprites go to 384px on the
-  long edge and the two backdrops to 640px as JPEG.
+  long edge and the three backdrops to 640px as JPEG.
 
 ```powershell
 Add-Type -AssemblyName PresentationCore
-$root = "C:\Users\Bago\Desktop\DOSYALAR\ŞİRKET YAPILANMA\YAPAY ZEKA\VS_CODE\BAGO_DİNO GAME 1"
+$root = (Get-Location).Path   # run it FROM the project directory. PowerShell 5.1
+                              # reads a UTF-8 script as ANSI, so a literal path with
+                              # Turkish letters in it comes back mangled and nothing
+                              # resolves.
 $keepFull = @("ground.png","forest_ground.png","ice_ground.png","ice_icicle.png")
-$asJpeg   = @("forest_bg.png","ice_bg.png")
+$asJpeg   = @("forest_bg.png","ice_bg.png","volcano_bg.png")
 $skip     = @("portal.jpg")   # only the onerror fallback; portal.png is bundled
 
-$html = Get-Content (Join-Path $root "index2.html") -Raw
+# the game is split across src/*.js now, so the asset names live there too
+$html = (Get-Content (Join-Path $root "index2.html") -Raw)
+foreach ($f in Get-ChildItem (Join-Path $root "src") -Filter *.js) { $html += (Get-Content $f.FullName -Raw) }
 $names = [regex]::Matches($html, '"([\w./-]+\.(?:png|jpg|jpeg|webp))"') |
          ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
 

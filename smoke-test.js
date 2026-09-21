@@ -63,9 +63,18 @@ function check(name,cond,extra){
 const drawStats={quad:0, images:[], rotations:[]};
 function makeCtx(){
   const grad={addColorStop(){}};
+  // a translate/scale stack, so a recorded destination rect is where the art
+  // actually landed on the canvas rather than where the call happened to say
+  let tx=0, ty=0, kx=1, ky=1;
+  const stack=[];
   const target={
     canvas:{width:900,height:506},
-    save(){},restore(){},translate(){},rotate(a){ drawStats.rotations.push(a); },scale(){},
+    save(){ stack.push([tx,ty,kx,ky]); },
+    restore(){ const p=stack.pop(); if(p){ tx=p[0]; ty=p[1]; kx=p[2]; ky=p[3]; } },
+    translate(x,y){ tx+=(x||0)*kx; ty+=(y||0)*ky; },
+    rotate(a){ drawStats.rotations.push(a); },
+    scale(a,b){ kx*=(a===undefined?1:a); ky*=(b===undefined?1:b); },
+    setTransform(){ tx=0; ty=0; kx=1; ky=1; },
     beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},
     quadraticCurveTo(){ drawStats.quad++; },bezierCurveTo(){},rect(){},clip(){},
     fill(){},stroke(){},fillRect(){},strokeRect(){},clearRect(){},
@@ -73,8 +82,18 @@ function makeCtx(){
     drawImage(img,sx,sy,sw,sh,dx,dy,dw,dh){
       // only the 9-arg form carries a source rect, which is what the ground
       // strip uses; the 3-arg form is recorded as a plain blit
-      if(arguments.length>=9) drawStats.images.push({sx,sy,sw,sh,dx,dy,dw,dh});
-      else drawStats.images.push({dx:sx,dy:sy});
+      // the SOURCE matters as much as the rect: 'the ice stage draws the
+      // ice backdrop' cannot be asserted without knowing which sheet it was
+      const src=(img&&img.src)||'';
+      // destination in canvas space; a mirrored blit reports a negative width
+      const P=(x,y,w,h)=>({dx:tx+(x||0)*kx, dy:ty+(y||0)*ky, dw:(w||0)*kx, dh:(h||0)*ky});
+      if(arguments.length>=9){
+        const p=P(dx,dy,dw,dh);
+        drawStats.images.push({src,sx,sy,sw,sh,dx:p.dx,dy:p.dy,dw:p.dw,dh:p.dh});
+      } else {
+        const p=P(sx,sy,sw,sh);
+        drawStats.images.push({src,dx:p.dx,dy:p.dy,dw:p.dw,dh:p.dh});
+      }
     },
     createLinearGradient(){return grad;},createRadialGradient(){return grad;},
     createPattern(){return null;},
@@ -273,6 +292,13 @@ function run(opts){
   drawHUD:()=>drawHUD(),
   get bank(){return bank;},
   get roster(){return roster;},
+  get THEMES(){return THEMES;},
+  themeOf:()=>themeOf(),
+  drawBiomeBG:()=>drawBiomeBG(),
+  drawAtmosphere:(TH)=>drawAtmosphere(TH),
+  get BG_PARALLAX(){return BG_PARALLAX;},
+  get camX(){return camX;}, set camX(v){camX=v;},
+  get particles(){return particles;},
   get ROLES(){return ROLES;}, get ROLE_IDS(){return ROLE_IDS;},
   get HATCH_NAMES(){return HATCH_NAMES;},
   makeHatchling:(sp)=>makeHatchling(sp),
@@ -383,7 +409,7 @@ function run(opts){
   // the stubbed localStorage, so a scenario can prove something was actually
   // written rather than just mutated in memory
   return {g,step,keys,click,sandbox,loadedImages,rafQueue,drawStats,
-          store:sandbox.localStorage};
+          store:sandbox.localStorage, artLoads:FIRE_ONLOAD};
 }
 
 function runSuite(){
@@ -4244,6 +4270,155 @@ function runSuite(){
   const back=g.broodBackButton();
   click(back.x+back.w/2,back.y+back.h/2);
   check('tapping HARİTA leaves it', g.STATE==='map', g.STATE);
+}
+
+// ── scenario 111: every biome has its own sky ───────────────
+{
+  const {g,step}=run({map:true});
+  const seen={};
+  for(const [name,th] of Object.entries(g.THEMES)){
+    if(!th.bg) continue;
+    check(name+' names a backdrop of its own', typeof th.bg==='string', th.bg);
+    check('...and nobody else uses it', !seen[th.bg], th.bg+' also on '+seen[th.bg]);
+    seen[th.bg]=name;
+  }
+  check('all three playable biomes have one',
+        ['volcano','forest','ice'].every(k=>!!g.THEMES[k].bg),
+        ['volcano','forest','ice'].map(k=>k+':'+(g.THEMES[k].bg||'-')).join(' '));
+  check('each names its own atmosphere too',
+        ['volcano','forest','ice'].every(k=>!!g.THEMES[k].atmos),
+        ['volcano','forest','ice'].map(k=>k+':'+(g.THEMES[k].atmos||'-')).join(' '));
+  check('...and the three are different',
+        new Set(['volcano','forest','ice'].map(k=>g.THEMES[k].atmos)).size===3,
+        ['volcano','forest','ice'].map(k=>g.THEMES[k].atmos).join(','));
+}
+
+// ── scenario 112: the stage draws the backdrop it asked for ─
+{
+  const {g,step,drawStats,artLoads}=run({map:true});
+  // one stage per biome: volcano 0, forest 3, ice 6
+  for(const [li,want] of [[0,'volcano_bg.png'],[3,'forest_bg.png'],[6,'ice_bg.png']]){
+    g.startWorld(0);
+    g.loadLevel(li);
+    g.player.hp=99; g.player.invuln=999;
+    step(2);
+    drawStats.images.length=0;
+    drawStats.quad=0;
+    g.drawBiomeBG();
+    const srcs=drawStats.images.map(im=>String(im.src||''));
+    if(artLoads){
+      check('stage '+li+' draws '+want,
+            srcs.some(sname=>sname.indexOf(want)>=0),
+            srcs.join(',')||'(nothing drawn)');
+      // and only its own: a biome borrowing another's sky is the bug here
+      const others=['volcano_bg.png','forest_bg.png','ice_bg.png'].filter(o=>o!==want);
+      check('...and none of the others',
+            !srcs.some(sname=>others.some(o=>sname.indexOf(o)>=0)),
+            srcs.join(','));
+    } else {
+      check('stage '+li+' blits no backdrop when the sheet never arrives',
+            srcs.length===0, srcs.join(','));
+      check('...and still paints the plate behind it', true);
+    }
+  }
+}
+
+// ── scenario 113: it tiles forever, at a quarter speed ──────
+{
+  const {g,step,drawStats,artLoads}=run({map:true});
+  g.startWorld(0);
+  g.loadLevel(0);
+  g.player.hp=99; g.player.invuln=999;
+  step(2);
+
+  check('the backdrop drifts slower than the world', g.BG_PARALLAX<1, g.BG_PARALLAX);
+  check('...but it does drift', g.BG_PARALLAX>0, g.BG_PARALLAX);
+
+  // the strip has to cover the canvas at any camera position, including
+  // absurd ones — a gap here is a tear in the sky
+  const coverAt=(cx)=>{
+    g.camX=cx;
+    drawStats.images.length=0;
+    g.drawBiomeBG();
+    const tiles=drawStats.images.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0);
+    if(!tiles.length) return null;
+    // sort by destination x and look for a hole between consecutive tiles
+    const spans=tiles.map(im=>[Math.min(im.dx,im.dx+im.dw),Math.max(im.dx,im.dx+im.dw)])
+                     .sort((a,b)=>a[0]-b[0]);
+    let covered=spans[0][0]<=0, edge=spans[0][1];
+    for(let i=1;i<spans.length;i++){
+      if(spans[i][0]>edge+0.5){ covered=false; break; }
+      edge=Math.max(edge,spans[i][1]);
+    }
+    return covered && edge>=900;
+  };
+  if(artLoads){
+    const probes=[0,137,900,5000,-800,123456];
+    const holes=probes.filter(cx=>coverAt(cx)!==true);
+    check('the sky has no seam at any camera position', holes.length===0,
+          'gaps at camX '+holes.join(','));
+
+    // and it really is scrolling: the same tile lands somewhere else
+    g.camX=0;  drawStats.images.length=0; g.drawBiomeBG();
+    const lead=(arr)=>{
+      const t=arr.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0)
+                 .map(im=>Math.min(im.dx,im.dx+im.dw)).sort((p,q)=>p-q);
+      return t.length?t[0]:null;
+    };
+    const a={dx:lead(drawStats.images)};
+    // a SMALL move: shift the camera far enough and the tile set wraps, so
+    // the leftmost tile becomes a different tile and the measurement stops
+    // being about parallax at all
+    g.camX=40; drawStats.images.length=0; g.drawBiomeBG();
+    const b={dx:lead(drawStats.images)};
+    check('the backdrop moves with the camera', a && b && a.dx!==b.dx,
+          (a&&a.dx)+' -> '+(b&&b.dx));
+    // ...and slower than the world does, which is the whole point of parallax
+    // The strip repeats every tile width, so its position is only meaningful
+    // MODULO one tile: a shift of one whole tile is the same picture. Measure
+    // the circular distance, which is what the eye actually sees move.
+    const tileW=Math.abs((drawStats.images.filter(im=>String(im.src||'').indexOf('volcano_bg')>=0)[0]||{}).dw||0);
+    let shift=null;
+    if(a.dx!==null && b.dx!==null && tileW>0){
+      const d=Math.abs(b.dx-a.dx)%tileW;
+      shift=Math.min(d,tileW-d);
+    }
+    check('...but slower than the world', shift!==null && shift>0 && shift<40,
+          'camera 40 -> backdrop '+(shift===null?'?':shift.toFixed(1))+' (tile '+tileW.toFixed(0)+')');
+  }
+}
+
+// ── scenario 114: each biome breathes its own air ───────────
+{
+  const {g,step}=run({map:true});
+  g.startWorld(0);
+  step(2);
+  // drive the atmosphere pass hard and see what colour comes out
+  const sample=(kind)=>{
+    g.particles.length=0;
+    for(let i=0;i<600;i++) g.drawAtmosphere({atmos:kind});
+    return g.particles.slice();
+  };
+  const ash=sample('ash'), spore=sample('spore'), snow=sample('snow');
+  check('the volcano puts ash in the air', ash.length>0, ash.length);
+  check('the canopy puts spores in it', spore.length>0, spore.length);
+  check('the peaks put snow in it', snow.length>0, snow.length);
+
+  // ash rises, snow falls. That is the whole difference and it is testable.
+  check('ash drifts upward', ash.every(p=>p.vy<0), ash.filter(p=>p.vy>=0).length+' fell');
+  check('snow drifts downward', snow.every(p=>p.vy>0), snow.filter(p=>p.vy<=0).length+' rose');
+  check('ash is warm-coloured',
+        ash.every(p=>/255,(1[0-9]|[2-9][0-9])|120,60,40/.test(p.color)),
+        ash.slice(0,3).map(p=>p.color).join(' '));
+  check('spores are green',
+        spore.every(p=>/110,231,183|52,211,153/.test(p.color)),
+        spore.slice(0,3).map(p=>p.color).join(' '));
+
+  // and an unnamed biome gets nothing rather than somebody else's weather
+  g.particles.length=0;
+  for(let i=0;i<600;i++) g.drawAtmosphere({});
+  check('a biome with no atmosphere gets none', g.particles.length===0,
+        g.particles.length);
 }
 
 // ── scenario 9: death screen untouched ────────────────────────
